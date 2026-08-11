@@ -266,7 +266,9 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
           <label class="f">DTE (opcional)<input type="text" id="vDte" placeholder="Nº de DTE"></label>
           <label class="f">Km<input type="number" id="vKm" min="0" step="0.1" placeholder="0" required></label>
           <label class="f">Precio por km ($)<input type="number" id="vPrecio" min="0" step="0.01" placeholder="0,00" required></label>
-          <label class="f">Gastos del viaje ($)<input type="number" id="vGastos" min="0" step="0.01" placeholder="0,00"></label>
+          <label class="f">Arranque ($)<input type="number" id="vGastos" min="0" step="0.01" placeholder="0,00"></label>
+          <label class="f">Peajes ($)<input type="number" id="vPeajes" min="0" step="0.01" placeholder="0,00"></label>
+          <label class="f">Seguro ($)<input type="number" id="vSeguro" min="0" step="0.01" placeholder="0,00"></label>
           <label class="f">Nº factura (si ya se facturó)<input type="text" id="vFactura" placeholder="opcional"></label>
         </div>
         <div class="form-actions">
@@ -407,8 +409,8 @@ const MAP = {
     from: d => ({ id:d.id, fecha:d.fecha||"", detalle:d.detalle||"", categoria:d.categoria||"Otros", factura:d.factura||"", alic:d.alic==null?21:Number(d.alic), monto:Number(d.monto)||0, pago:d.pago||null })
   },
   viajes: {
-    to: r => ({ id:r.id, fecha:r.fecha||null, cliente:r.cliente||"", ruta:r.ruta||"", dte:r.dte||"", km:Number(r.km)||0, precio:Number(r.precio)||0, gastos:Number(r.gastos)||0, factura:r.factura||"", facturado:!!r.facturado }),
-    from: d => ({ id:d.id, fecha:d.fecha||"", cliente:d.cliente||"", ruta:d.ruta||"", dte:d.dte||"", km:Number(d.km)||0, precio:Number(d.precio)||0, gastos:Number(d.gastos)||0, factura:d.factura||"", facturado:!!d.facturado })
+    to: r => ({ id:r.id, fecha:r.fecha||null, cliente:r.cliente||"", ruta:r.ruta||"", dte:r.dte||"", km:Number(r.km)||0, precio:Number(r.precio)||0, gastos:Number(r.gastos)||0, peajes:Number(r.peajes)||0, seguro:Number(r.seguro)||0, factura:r.factura||"", facturado:!!r.facturado }),
+    from: d => ({ id:d.id, fecha:d.fecha||"", cliente:d.cliente||"", ruta:d.ruta||"", dte:d.dte||"", km:Number(d.km)||0, precio:Number(d.precio)||0, gastos:Number(d.gastos)||0, peajes:Number(d.peajes)||0, seguro:Number(d.seguro)||0, factura:d.factura||"", facturado:!!d.facturado })
   },
   rendiciones: {
     to: r => ({ id:r.id, fecha:r.fecha||null, tipo:r.tipo||"ENTREGA", detalle:r.detalle||"", monto:Number(r.monto)||0 }),
@@ -486,7 +488,8 @@ function toast(msg){
 }
 
 /* Cálculos de negocio */
-function viajeNeto(v){ return (Number(v.km)||0)*(Number(v.precio)||0) + (Number(v.gastos)||0); }
+function viajeFijos(v){ return (Number(v.gastos)||0) + (Number(v.peajes)||0) + (Number(v.seguro)||0); }  // arranque + peajes + seguro
+function viajeNeto(v){ return (Number(v.km)||0)*(Number(v.precio)||0) + viajeFijos(v); }
 function viajeIva(v){ return viajeNeto(v)*IVA_VIAJES; }
 function viajeTotalCIva(v){ return viajeNeto(v)*(1+IVA_VIAJES); }
 function viajeBaseChofer(v){ return (Number(v.km)||0)*(Number(v.precio)||0); }   // sin gastos
@@ -747,13 +750,15 @@ const formViaje = document.getElementById("formViaje");
 function previewViaje(){
   const km = Number(document.getElementById("vKm").value)||0;
   const p  = Number(document.getElementById("vPrecio").value)||0;
-  const g  = Number(document.getElementById("vGastos").value)||0;
+  const f  = (Number(document.getElementById("vGastos").value)||0)
+           + (Number(document.getElementById("vPeajes").value)||0)
+           + (Number(document.getElementById("vSeguro").value)||0);
   const el = document.getElementById("vPreview");
   if(!(km&&p)){ el.innerHTML=""; return; }
-  const neto = km*p+g;
+  const neto = km*p+f;
   el.innerHTML = `Neto ${money(neto)} + IVA 21% ${money(neto*IVA_VIAJES)} = <b>${money(neto*(1+IVA_VIAJES))}</b>`;
 }
-["vKm","vPrecio","vGastos"].forEach(id=>document.getElementById(id).addEventListener("input", previewViaje));
+["vKm","vPrecio","vGastos","vPeajes","vSeguro"].forEach(id=>document.getElementById(id).addEventListener("input", previewViaje));
 formViaje.addEventListener("submit", e=>{
   e.preventDefault();
   const prev = editViaje ? state.viajes.find(r=>r.id===editViaje) : null;
@@ -767,6 +772,8 @@ formViaje.addEventListener("submit", e=>{
     km: Number(document.getElementById("vKm").value)||0,
     precio: Number(document.getElementById("vPrecio").value)||0,
     gastos: Number(document.getElementById("vGastos").value)||0,
+    peajes: Number(document.getElementById("vPeajes").value)||0,
+    seguro: Number(document.getElementById("vSeguro").value)||0,
     factura: factura,
     facturado: prev ? (factura ? true : prev.facturado) : !!factura
   };
@@ -799,6 +806,8 @@ function editViajeRow(id){
   document.getElementById("vKm").value=r.km;
   document.getElementById("vPrecio").value=r.precio;
   document.getElementById("vGastos").value=r.gastos||"";
+  document.getElementById("vPeajes").value=r.peajes||"";
+  document.getElementById("vSeguro").value=r.seguro||"";
   document.getElementById("vFactura").value=r.factura||"";
   document.getElementById("vSubmit").textContent="Guardar cambios";
   document.getElementById("viajeFormTitle").textContent="Editando viaje";
@@ -835,7 +844,7 @@ function renderViajes(){
   const tNeto = rows.reduce((s,r)=>s+viajeNeto(r),0);
   wrap.innerHTML = `<table class="wide"><thead><tr>
       <th>Fecha</th><th>Cliente</th><th>Ruta</th><th>DTE</th><th class="num">Km</th><th class="num">$/km</th>
-      <th class="num">Gastos</th><th class="num">Neto</th><th class="num">IVA 21%</th><th class="num">Total c/IVA</th><th>Estado</th><th></th>
+      <th class="num">Fijos</th><th class="num">Neto</th><th class="num">IVA 21%</th><th class="num">Total c/IVA</th><th>Estado</th><th></th>
     </tr></thead><tbody>` +
     rows.map(r=>`<tr>
       <td>${fmtFecha(r.fecha)}</td>
@@ -844,7 +853,7 @@ function renderViajes(){
       <td class="fine">${esc(r.dte)||"—"}</td>
       <td class="num">${fmtNum.format(r.km)}</td>
       <td class="num">${money(r.precio)}</td>
-      <td class="num">${money(r.gastos)}</td>
+      <td class="num" title="Arranque ${money(r.gastos)} · Peajes ${money(r.peajes)} · Seguro ${money(r.seguro)}">${money(viajeFijos(r))}</td>
       <td class="num">${money(viajeNeto(r))}</td>
       <td class="num">${money(viajeIva(r))}</td>
       <td class="num"><b>${money(viajeTotalCIva(r))}</b></td>
@@ -1147,7 +1156,7 @@ function exportExcel(){
   }));
   const vS = XLSX.utils.json_to_sheet(state.viajes.map(r=>({
     "Fecha": r.fecha, "Cliente": r.cliente, "Ruta": r.ruta||"", "DTE": r.dte||"", "Km": r.km,
-    "Precio x Km": r.precio, "Gastos": r.gastos||0,
+    "Precio x Km": r.precio, "Arranque": r.gastos||0, "Peajes": r.peajes||0, "Seguro": r.seguro||0,
     "Neto": +viajeNeto(r).toFixed(2), "IVA 21%": +viajeIva(r).toFixed(2), "Total c/IVA": +viajeTotalCIva(r).toFixed(2),
     "Comisión Chofer 16%": +viajePagoChofer(r).toFixed(2),
     "Facturado": r.facturado?"SI":"NO", "Nº Factura": r.factura||"" })));
@@ -1271,7 +1280,8 @@ document.getElementById("fileImport").addEventListener("change", function(){
         nuevo.viajes.push({ id: newId(), fecha: normFecha(r["Fecha"]),
           cliente: String(r["Cliente"]||""), ruta: String(r["Ruta"]||""), dte: String(r["DTE"]||""),
           km: Number(r["Km"])||0, precio: Number(r["Precio x Km"]||r["Precio"])||0,
-          gastos: Number(r["Gastos"])||0,
+          gastos: Number(r["Arranque"]!==""&&r["Arranque"]!=null ? r["Arranque"] : r["Gastos"])||0,
+          peajes: Number(r["Peajes"])||0, seguro: Number(r["Seguro"])||0,
           facturado: f2==="SI"||f2==="SÍ"||f2==="TRUE"||f2==="1",
           factura: String(r["Nº Factura"]||r["N° Factura"]||"") });
       });
