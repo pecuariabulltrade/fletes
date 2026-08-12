@@ -445,9 +445,19 @@ const MAP = {
 function normCuit(s){ return String(s==null?"":s).replace(/\D/g,""); }
 function newId(){ return crypto.randomUUID(); }
 
+async function fetchTodo(t){
+  const filas = [];
+  for(let desde = 0;; desde += 1000){
+    const { data, error } = await sb.from(t).select("*").range(desde, desde + 999);
+    if(error) return { error };
+    filas.push(...(data||[]));
+    if(!data || data.length < 1000) break;
+  }
+  return { data: filas };
+}
 async function loadAll(){
   const tablas = ["gastos","viajes","rendiciones","echeqs","banco","terceros"];
-  const res = await Promise.all(tablas.map(t => sb.from(t).select("*")));
+  const res = await Promise.all(tablas.map(t => fetchTodo(t)));
   for(let i=0;i<tablas.length;i++){
     if(res[i].error){ dbError(res[i].error); return false; }
     state[tablas[i]] = (res[i].data||[]).map(MAP[tablas[i]].from);
