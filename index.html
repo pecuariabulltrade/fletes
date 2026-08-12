@@ -122,6 +122,9 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   .chip{display:inline-block; font-size:12px; font-weight:700; border-radius:12px; padding:2px 10px; cursor:default;}
   .chip.fact{background:var(--green-bg); color:var(--green);}
   .chip.pend{background:var(--amber-bg); color:var(--amber);}
+  .chip.propio{background:var(--blue-bg); color:var(--blue);}
+  .chip.nc{background:var(--red-bg); color:var(--red);}
+  .chip.nd{background:var(--blue-bg); color:var(--blue);}
   .chip.entrega{background:var(--blue-bg); color:var(--blue);}
   .chip.rendicion{background:var(--green-bg); color:var(--green);}
   .chip.click{cursor:pointer; border:1px dashed transparent;}
@@ -195,6 +198,13 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         <div class="grid">
           <label class="f">Fecha<input type="date" id="gFecha" required></label>
           <label class="f">Detalle / Proveedor<input type="text" id="gDetalle" placeholder="Ej: YPF ruta 9" required></label>
+          <label class="f">Comprobante
+            <select id="gTipoComp">
+              <option value="FAC">Factura</option>
+              <option value="ND">Nota de débito (suma)</option>
+              <option value="NC">Nota de crédito (resta)</option>
+            </select>
+          </label>
           <label class="f">Categoría
             <select id="gCategoria">
               <option>Combustible</option><option>Peajes</option><option>Mantenimiento</option>
@@ -254,6 +264,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     <div class="kpis">
       <div class="kpi"><div class="lbl">Pendiente a facturar</div><div class="val" id="kVPend">$ 0</div><div class="sub" id="kVPendSub"></div></div>
       <div class="kpi"><div class="lbl">Facturado</div><div class="val pos" id="kVFact">$ 0</div><div class="sub" id="kVFactSub"></div></div>
+      <div class="kpi"><div class="lbl">Viajes propios</div><div class="val" id="kVProp">$ 0</div><div class="sub">no facturables · pagan chofer</div></div>
       <div class="kpi"><div class="lbl">Km del período</div><div class="val" id="kVKm">0</div></div>
     </div>
     <div class="card">
@@ -261,6 +272,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       <form id="formViaje">
         <div class="grid">
           <label class="f">Fecha<input type="date" id="vFecha" required></label>
+          <label class="f">CUIT cliente<input type="text" id="vCuit" placeholder="30123456789" inputmode="numeric"><span class="fine" id="vCuitHint"></span></label>
           <label class="f">Cliente<input type="text" id="vCliente" placeholder="Ej: Transportes SA" required></label>
           <label class="f">Ruta / Detalle<input type="text" id="vRuta" placeholder="Ej: Bs As → Rosario"></label>
           <label class="f">DTE (opcional)<input type="text" id="vDte" placeholder="Nº de DTE"></label>
@@ -284,6 +296,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         <option value="all">Todos los estados</option>
         <option value="pend">Pendientes</option>
         <option value="fact">Facturados</option>
+        <option value="prop">Propios</option>
       </select>
       <div class="spacer"></div><span class="hint">Tocá el estado en la tabla para marcar facturado / pendiente · IVA 21% sobre el total</span>
     </div>
@@ -400,17 +413,17 @@ const SB_KEY = "sb_publishable_U17zHkiQ-roiQz5TMXQswA_Z3Dll8g_";
 const sb = supabase.createClient(SB_URL, SB_KEY);
 const AUTH_DOMAIN = "@fletes.app";
 
-let state = { gastos: [], viajes: [], rendiciones: [], echeqs: [], banco: [] };
+let state = { gastos: [], viajes: [], rendiciones: [], echeqs: [], banco: [], terceros: [] };
 
 /* Mapeo app <-> base */
 const MAP = {
   gastos: {
-    to: r => ({ id:r.id, fecha:r.fecha||null, detalle:r.detalle||"", categoria:r.categoria||"Otros", factura:r.factura||"", alic:Number(r.alic)||0, monto:Number(r.monto)||0, pago:r.pago||null }),
-    from: d => ({ id:d.id, fecha:d.fecha||"", detalle:d.detalle||"", categoria:d.categoria||"Otros", factura:d.factura||"", alic:d.alic==null?21:Number(d.alic), monto:Number(d.monto)||0, pago:d.pago||null })
+    to: r => ({ id:r.id, fecha:r.fecha||null, detalle:r.detalle||"", categoria:r.categoria||"Otros", factura:r.factura||"", alic:Number(r.alic)||0, monto:Number(r.monto)||0, pago:r.pago||null, tipo_comp:r.tipoComp||"FAC" }),
+    from: d => ({ id:d.id, fecha:d.fecha||"", detalle:d.detalle||"", categoria:d.categoria||"Otros", factura:d.factura||"", alic:d.alic==null?21:Number(d.alic), monto:Number(d.monto)||0, pago:d.pago||null, tipoComp:d.tipo_comp||"FAC" })
   },
   viajes: {
-    to: r => ({ id:r.id, fecha:r.fecha||null, cliente:r.cliente||"", ruta:r.ruta||"", dte:r.dte||"", km:Number(r.km)||0, precio:Number(r.precio)||0, gastos:Number(r.gastos)||0, peajes:Number(r.peajes)||0, seguro:Number(r.seguro)||0, factura:r.factura||"", facturado:!!r.facturado }),
-    from: d => ({ id:d.id, fecha:d.fecha||"", cliente:d.cliente||"", ruta:d.ruta||"", dte:d.dte||"", km:Number(d.km)||0, precio:Number(d.precio)||0, gastos:Number(d.gastos)||0, peajes:Number(d.peajes)||0, seguro:Number(d.seguro)||0, factura:d.factura||"", facturado:!!d.facturado })
+    to: r => ({ id:r.id, fecha:r.fecha||null, cliente:r.cliente||"", ruta:r.ruta||"", dte:r.dte||"", cuit:r.cuit||"", km:Number(r.km)||0, precio:Number(r.precio)||0, gastos:Number(r.gastos)||0, peajes:Number(r.peajes)||0, seguro:Number(r.seguro)||0, factura:r.factura||"", estado:r.estado||"PEND", facturado:(r.estado||"PEND")==="FACT" }),
+    from: d => ({ id:d.id, fecha:d.fecha||"", cliente:d.cliente||"", ruta:d.ruta||"", dte:d.dte||"", cuit:d.cuit||"", km:Number(d.km)||0, precio:Number(d.precio)||0, gastos:Number(d.gastos)||0, peajes:Number(d.peajes)||0, seguro:Number(d.seguro)||0, factura:d.factura||"", estado:d.estado||(d.facturado?"FACT":"PEND"), facturado:!!d.facturado })
   },
   rendiciones: {
     to: r => ({ id:r.id, fecha:r.fecha||null, tipo:r.tipo||"ENTREGA", detalle:r.detalle||"", monto:Number(r.monto)||0 }),
@@ -423,12 +436,17 @@ const MAP = {
   banco: {
     to: r => ({ id:r.id, fecha:r.fecha||null, cuenta:r.cuenta||"BANCO", tipo:r.tipo||"INGRESO", detalle:r.detalle||"", monto:Number(r.monto)||0 }),
     from: d => ({ id:d.id, fecha:d.fecha||"", cuenta:d.cuenta||"BANCO", tipo:d.tipo||"INGRESO", detalle:d.detalle||"", monto:Number(d.monto)||0 })
+  },
+  terceros: {
+    to: r => ({ cuit: normCuit(r.cuit), nombre: r.nombre||"" }),
+    from: d => ({ cuit: d.cuit||"", nombre: d.nombre||"" })
   }
 };
+function normCuit(s){ return String(s==null?"":s).replace(/\D/g,""); }
 function newId(){ return crypto.randomUUID(); }
 
 async function loadAll(){
-  const tablas = ["gastos","viajes","rendiciones","echeqs","banco"];
+  const tablas = ["gastos","viajes","rendiciones","echeqs","banco","terceros"];
   const res = await Promise.all(tablas.map(t => sb.from(t).select("*")));
   for(let i=0;i<tablas.length;i++){
     if(res[i].error){ dbError(res[i].error); return false; }
@@ -494,8 +512,9 @@ function viajeIva(v){ return viajeNeto(v)*IVA_VIAJES; }
 function viajeTotalCIva(v){ return viajeNeto(v)*(1+IVA_VIAJES); }
 function viajeBaseChofer(v){ return (Number(v.km)||0)*(Number(v.precio)||0); }   // sin gastos
 function viajePagoChofer(v){ return viajeBaseChofer(v)*PCT_CHOFER; }
-function gastoNeto(g){ return (Number(g.monto)||0)/(1+(Number(g.alic)||0)/100); }
-function gastoIva(g){ return (Number(g.monto)||0) - gastoNeto(g); }
+function gastoMonto(g){ return (g.tipoComp==="NC" ? -1 : 1) * (Number(g.monto)||0); }   // NC resta
+function gastoNeto(g){ return gastoMonto(g)/(1+(Number(g.alic)||0)/100); }
+function gastoIva(g){ return gastoMonto(g) - gastoNeto(g); }
 function alicLabel(a){ return (a===10.5||a==="10.5") ? "10,5%" : (Number(a)||0)+"%"; }
 
 /* Selector de meses */
@@ -579,6 +598,7 @@ formGasto.addEventListener("submit", e=>{
     id: editGasto ? editGasto : newId(),
     fecha: document.getElementById("gFecha").value,
     detalle: document.getElementById("gDetalle").value.trim(),
+    tipoComp: document.getElementById("gTipoComp").value,
     categoria: document.getElementById("gCategoria").value,
     factura: document.getElementById("gFactura").value.trim(),
     alic: Number(document.getElementById("gAlic").value)||0,
@@ -609,6 +629,7 @@ function editGastoRow(id){
   editGasto=id;
   document.getElementById("gFecha").value=r.fecha;
   document.getElementById("gDetalle").value=r.detalle;
+  document.getElementById("gTipoComp").value=r.tipoComp||"FAC";
   document.getElementById("gCategoria").value=r.categoria;
   document.getElementById("gFactura").value=r.factura||"";
   document.getElementById("gAlic").value=String(r.alic);
@@ -632,41 +653,52 @@ function renderGastos(){
   if(selCat.value!=="all") rows = rows.filter(r=>r.categoria===selCat.value);
   rows = ordenaFecha(rows);
 
-  const total = rows.reduce((s,r)=>s+r.monto,0);
+  const total = rows.reduce((s,r)=>s+gastoMonto(r),0);
   const neto = rows.reduce((s,r)=>s+gastoNeto(r),0);
   const iva = total-neto;
   const sinPagar = rows.filter(r=>!r.pago);
   document.getElementById("kGastosTotal").textContent = money(total);
   document.getElementById("kGastosNeto").textContent = money(neto);
   document.getElementById("kGastosIva").textContent = money(iva);
-  document.getElementById("kGastosPend").textContent = money(sinPagar.reduce((s,r)=>s+r.monto,0));
+  document.getElementById("kGastosPend").textContent = money(sinPagar.reduce((s,r)=>s+gastoMonto(r),0));
   document.getElementById("kGastosPendSub").textContent = sinPagar.length + " de " + rows.length + " sin pagar";
 
   const wrap = document.getElementById("tblGastos");
   if(!rows.length){ wrap.innerHTML = '<div class="empty">Sin gastos cargados en este período.</div>'; return; }
   wrap.innerHTML = `<table class="wide"><thead><tr>
-      <th>Fecha</th><th>Detalle</th><th>Categoría</th><th>Nº factura</th><th class="num">Alíc.</th>
+      <th>Fecha</th><th>Detalle</th><th>Comp.</th><th>Categoría</th><th>Nº factura</th><th class="num">Alíc.</th>
       <th class="num">Neto</th><th class="num">IVA</th><th class="num">Total</th><th>Pago</th><th></th>
     </tr></thead><tbody>` +
     rows.map(r=>`<tr>
       <td>${fmtFecha(r.fecha)}</td>
       <td>${esc(r.detalle)}</td>
+      <td>${compCell(r)}</td>
       <td>${esc(r.categoria)}</td>
       <td class="fine">${esc(r.factura)||"—"}</td>
       <td class="num fine">${alicLabel(r.alic)}</td>
       <td class="num">${money(gastoNeto(r))}</td>
       <td class="num">${money(gastoIva(r))}</td>
-      <td class="num"><b>${money(r.monto)}</b></td>
+      <td class="num"><b>${money(gastoMonto(r))}</b></td>
       <td>${pagoCell(r)}</td>
       <td class="actions">
         <button class="btn small" onclick="editGastoRow('${r.id}')">Editar</button>
         <button class="btn small" onclick="armDelete(this,'gastos','${r.id}')">Borrar</button>
       </td></tr>`).join("") +
-    `</tbody><tfoot><tr><td colspan="5">Total</td>
+    `</tbody><tfoot><tr><td colspan="6">Total</td>
       <td class="num">${money(neto)}</td><td class="num">${money(iva)}</td><td class="num">${money(total)}</td><td colspan="2"></td>
     </tr></tfoot></table>`;
 }
+function compCell(r){
+  const t = r.tipoComp||"FAC";
+  if(t==="NC") return '<span class="chip nc">NC</span>';
+  if(t==="ND") return '<span class="chip nd">ND</span>';
+  return '<span class="fine">Fact.</span>';
+}
 function pagoCell(r){
+  if(r.tipoComp==="NC"){
+    if(!r.pago) return `<button class="btn small" onclick="aplicarNC('${r.id}')">Aplicar</button>`;
+    return `<span class="chip click fact" onclick="undoPago('${r.id}')" title="Aplicada el ${fmtFecha(r.pago.fecha)} — tocar para deshacer">✓ Aplicada</span>`;
+  }
   if(!r.pago) return `<button class="btn small" onclick="pagarGasto('${r.id}')">Pagar</button>`;
   const m = r.pago.medio;
   const lbl = m==="EFECTIVO" ? "Efectivo" : m==="TRANSFERENCIA" ? "Transf." : "E-cheq";
@@ -682,8 +714,14 @@ document.getElementById("gCatFiltro").addEventListener("change", renderGastos);
 
 /* ---- Pago de gastos ---- */
 let payingGasto = null;
-function pagarGasto(id){
+function aplicarNC(id){
   const g = state.gastos.find(x=>x.id===id); if(!g || g.pago) return;
+  g.pago = { medio: "NC", fecha: hoyISO() };
+  dbUpsert("gastos", g); renderAll();
+  toast("Nota de crédito aplicada ✓ (no toca banco ni efectivo)");
+}
+function pagarGasto(id){
+  const g = state.gastos.find(x=>x.id===id); if(!g || g.pago || g.tipoComp==="NC") return;
   payingGasto = id;
   document.getElementById("payInfo").textContent = g.detalle + " — " + money(g.monto);
   document.getElementById("pFecha").value = hoyISO();
@@ -759,14 +797,27 @@ function previewViaje(){
   el.innerHTML = `Neto ${money(neto)} + IVA 21% ${money(neto*IVA_VIAJES)} = <b>${money(neto*(1+IVA_VIAJES))}</b>`;
 }
 ["vKm","vPrecio","vGastos","vPeajes","vSeguro"].forEach(id=>document.getElementById(id).addEventListener("input", previewViaje));
+document.getElementById("vCuit").addEventListener("input", ()=>{
+  const c = normCuit(document.getElementById("vCuit").value);
+  const hint = document.getElementById("vCuitHint");
+  if(c.length >= 11){
+    const t = state.terceros.find(x=>normCuit(x.cuit)===c);
+    if(t){ document.getElementById("vCliente").value = t.nombre; hint.textContent = "✓ " + t.nombre; }
+    else{ hint.textContent = "CUIT nuevo: se guarda con el nombre que escribas"; }
+  }else{ hint.textContent = ""; }
+});
 formViaje.addEventListener("submit", e=>{
   e.preventDefault();
   const prev = editViaje ? state.viajes.find(r=>r.id===editViaje) : null;
   const factura = document.getElementById("vFactura").value.trim();
+  const cuit = normCuit(document.getElementById("vCuit").value);
+  const cliente = document.getElementById("vCliente").value.trim();
+  const estadoPrev = prev ? prev.estado : "PEND";
   const rec = {
     id: editViaje ? editViaje : newId(),
     fecha: document.getElementById("vFecha").value,
-    cliente: document.getElementById("vCliente").value.trim(),
+    cliente: cliente,
+    cuit: cuit,
     ruta: document.getElementById("vRuta").value.trim(),
     dte: document.getElementById("vDte").value.trim(),
     km: Number(document.getElementById("vKm").value)||0,
@@ -775,8 +826,9 @@ formViaje.addEventListener("submit", e=>{
     peajes: Number(document.getElementById("vPeajes").value)||0,
     seguro: Number(document.getElementById("vSeguro").value)||0,
     factura: factura,
-    facturado: prev ? (factura ? true : prev.facturado) : !!factura
+    estado: factura ? "FACT" : estadoPrev
   };
+  rec.facturado = rec.estado==="FACT";
   if(editViaje){
     const i = state.viajes.findIndex(r=>r.id===editViaje);
     if(i>=0) state.viajes[i]=rec;
@@ -784,6 +836,12 @@ formViaje.addEventListener("submit", e=>{
   }else{
     state.viajes.push(rec);
     toast("Viaje agregado — "+money(viajeTotalCIva(rec))+" c/IVA");
+  }
+  /* aprender el tercero nuevo */
+  if(cuit.length >= 11 && cliente && !state.terceros.some(t=>normCuit(t.cuit)===cuit)){
+    const terc = { cuit, nombre: cliente };
+    state.terceros.push(terc);
+    dbUpsert("terceros", terc);
   }
   resetViajeForm(); dbUpsert("viajes", rec); renderAll();
 });
@@ -794,12 +852,14 @@ function resetViajeForm(){
   document.getElementById("viajeFormTitle").textContent="Cargar viaje";
   document.getElementById("vCancel").style.display="none";
   document.getElementById("vPreview").innerHTML="";
+  document.getElementById("vCuitHint").textContent="";
 }
 document.getElementById("vCancel").addEventListener("click", resetViajeForm);
 function editViajeRow(id){
   const r = state.viajes.find(x=>x.id===id); if(!r) return;
   editViaje=id;
   document.getElementById("vFecha").value=r.fecha;
+  document.getElementById("vCuit").value=r.cuit||"";
   document.getElementById("vCliente").value=r.cliente;
   document.getElementById("vRuta").value=r.ruta||"";
   document.getElementById("vDte").value=r.dte||"";
@@ -817,9 +877,16 @@ function editViajeRow(id){
 }
 function toggleFacturado(id){
   const r = state.viajes.find(x=>x.id===id); if(!r) return;
-  r.facturado = !r.facturado;
+  const next = r.estado==="PEND" ? "FACT" : r.estado==="FACT" ? "PROPIO" : "PEND";
+  if(next==="FACT"){
+    const n = prompt("Nº de factura (dejalo vacío si todavía no lo tenés):", r.factura||"");
+    if(n===null) return;   // canceló
+    r.factura = n.trim();
+  }
+  r.estado = next;
+  r.facturado = next==="FACT";
   dbUpsert("viajes", r); renderAll();
-  toast(r.facturado ? "Marcado como FACTURADO ✓" : "Marcado como pendiente");
+  toast(next==="FACT" ? "Marcado como FACTURADO ✓" : next==="PROPIO" ? "Marcado como viaje PROPIO (no facturable)" : "Marcado como pendiente");
 }
 function renderViajes(){
   const selMes = document.getElementById("vMes");
@@ -827,45 +894,49 @@ function renderViajes(){
   let rows = filtraMes(state.viajes, selMes);
   const est = document.getElementById("vEstado").value;
   const kmPer = rows.reduce((s,r)=>s+(Number(r.km)||0),0);
-  const pendN = rows.filter(r=>!r.facturado).reduce((s,r)=>s+viajeNeto(r),0);
-  const factN = rows.filter(r=>r.facturado).reduce((s,r)=>s+viajeNeto(r),0);
+  const pendN = rows.filter(r=>r.estado==="PEND").reduce((s,r)=>s+viajeNeto(r),0);
+  const factN = rows.filter(r=>r.estado==="FACT").reduce((s,r)=>s+viajeNeto(r),0);
+  const propN = rows.filter(r=>r.estado==="PROPIO").reduce((s,r)=>s+viajeNeto(r),0);
   document.getElementById("kVPend").textContent = money(pendN*(1+IVA_VIAJES));
   document.getElementById("kVPendSub").textContent = "Neto: "+money(pendN);
   document.getElementById("kVFact").textContent = money(factN*(1+IVA_VIAJES));
   document.getElementById("kVFactSub").textContent = "Neto: "+money(factN);
+  document.getElementById("kVProp").textContent = money(propN);
   document.getElementById("kVKm").textContent = fmtNum.format(kmPer)+" km";
 
-  if(est==="pend") rows = rows.filter(r=>!r.facturado);
-  if(est==="fact") rows = rows.filter(r=>r.facturado);
+  if(est==="pend") rows = rows.filter(r=>r.estado==="PEND");
+  if(est==="fact") rows = rows.filter(r=>r.estado==="FACT");
+  if(est==="prop") rows = rows.filter(r=>r.estado==="PROPIO");
   rows = ordenaFecha(rows);
 
   const wrap = document.getElementById("tblViajes");
   if(!rows.length){ wrap.innerHTML = '<div class="empty">Sin viajes en este período.</div>'; return; }
   const tNeto = rows.reduce((s,r)=>s+viajeNeto(r),0);
+  const tNetoFac = rows.filter(r=>r.estado!=="PROPIO").reduce((s,r)=>s+viajeNeto(r),0);
   wrap.innerHTML = `<table class="wide"><thead><tr>
       <th>Fecha</th><th>Cliente</th><th>Ruta</th><th>DTE</th><th class="num">Km</th><th class="num">$/km</th>
       <th class="num">Fijos</th><th class="num">Neto</th><th class="num">IVA 21%</th><th class="num">Total c/IVA</th><th>Estado</th><th></th>
     </tr></thead><tbody>` +
     rows.map(r=>`<tr>
       <td>${fmtFecha(r.fecha)}</td>
-      <td>${esc(r.cliente)}</td>
+      <td>${esc(r.cliente)}${r.cuit ? `<div class="fine">${esc(r.cuit)}</div>` : ""}</td>
       <td class="fine">${esc(r.ruta)||"—"}</td>
       <td class="fine">${esc(r.dte)||"—"}</td>
       <td class="num">${fmtNum.format(r.km)}</td>
       <td class="num">${money(r.precio)}</td>
       <td class="num" title="Arranque ${money(r.gastos)} · Peajes ${money(r.peajes)} · Seguro ${money(r.seguro)}">${money(viajeFijos(r))}</td>
       <td class="num">${money(viajeNeto(r))}</td>
-      <td class="num">${money(viajeIva(r))}</td>
-      <td class="num"><b>${money(viajeTotalCIva(r))}</b></td>
-      <td><span class="chip click ${r.facturado?"fact":"pend"}" onclick="toggleFacturado('${r.id}')" title="Tocar para cambiar">
-        ${r.facturado ? "✓ Facturado" : "Pendiente"}</span>
-        ${r.factura ? `<div class="fine">Fact. ${esc(r.factura)}</div>` : ""}</td>
+      <td class="num">${r.estado==="PROPIO" ? "—" : money(viajeIva(r))}</td>
+      <td class="num">${r.estado==="PROPIO" ? "—" : `<b>${money(viajeTotalCIva(r))}</b>`}</td>
+      <td><span class="chip click ${r.estado==="FACT"?"fact":r.estado==="PROPIO"?"propio":"pend"}" onclick="toggleFacturado('${r.id}')" title="Tocar para cambiar: Pendiente → Facturado → Propio">
+        ${r.estado==="FACT" ? "✓ Facturado" : r.estado==="PROPIO" ? "Propio" : "Pendiente"}</span>
+        ${r.factura && r.estado==="FACT" ? `<div class="fine">Fact. ${esc(r.factura)}</div>` : ""}</td>
       <td class="actions">
         <button class="btn small" onclick="editViajeRow('${r.id}')">Editar</button>
         <button class="btn small" onclick="armDelete(this,'viajes','${r.id}')">Borrar</button>
       </td></tr>`).join("") +
     `</tbody><tfoot><tr><td colspan="7">Total</td>
-      <td class="num">${money(tNeto)}</td><td class="num">${money(tNeto*IVA_VIAJES)}</td><td class="num">${money(tNeto*(1+IVA_VIAJES))}</td><td colspan="2"></td>
+      <td class="num">${money(tNeto)}</td><td class="num">${money(tNetoFac*IVA_VIAJES)}</td><td class="num">${money(tNetoFac*(1+IVA_VIAJES))}</td><td colspan="2"></td>
     </tr></tfoot></table>`;
 }
 document.getElementById("vMes").addEventListener("change", renderViajes);
@@ -1148,14 +1219,18 @@ function exportExcel(){
   const gS = XLSX.utils.json_to_sheet(state.gastos.map(r=>{
     const c = r.pago && r.pago.echeqId ? state.echeqs.find(x=>x.id===r.pago.echeqId) : null;
     return {
-    "Fecha": r.fecha, "Detalle": r.detalle, "Categoría": r.categoria,
+    "Fecha": r.fecha, "Detalle": r.detalle,
+    "Comprobante": r.tipoComp==="NC" ? "NOTA CREDITO" : r.tipoComp==="ND" ? "NOTA DEBITO" : "FACTURA",
+    "Categoría": r.categoria,
     "Nº Factura": r.factura||"", "Alícuota": Number(r.alic)||0,
-    "Neto": +gastoNeto(r).toFixed(2), "IVA": +gastoIva(r).toFixed(2), "Total": r.monto,
+    "Neto": +gastoNeto(r).toFixed(2), "IVA": +gastoIva(r).toFixed(2), "Total": +gastoMonto(r).toFixed(2),
     "Pago": r.pago ? r.pago.medio : "", "Fecha Pago": r.pago ? (r.pago.fecha||"") : "",
     "Nº E-Cheq": c ? c.num : "" };
   }));
   const vS = XLSX.utils.json_to_sheet(state.viajes.map(r=>({
-    "Fecha": r.fecha, "Cliente": r.cliente, "Ruta": r.ruta||"", "DTE": r.dte||"", "Km": r.km,
+    "Fecha": r.fecha, "Cliente": r.cliente, "CUIT": r.cuit||"",
+    "Estado": r.estado==="FACT" ? "FACTURADO" : r.estado==="PROPIO" ? "PROPIO" : "PENDIENTE",
+    "Ruta": r.ruta||"", "DTE": r.dte||"", "Km": r.km,
     "Precio x Km": r.precio, "Arranque": r.gastos||0, "Peajes": r.peajes||0, "Seguro": r.seguro||0,
     "Neto": +viajeNeto(r).toFixed(2), "IVA 21%": +viajeIva(r).toFixed(2), "Total c/IVA": +viajeTotalCIva(r).toFixed(2),
     "Comisión Chofer 16%": +viajePagoChofer(r).toFixed(2),
@@ -1169,12 +1244,14 @@ function exportExcel(){
   const bS = XLSX.utils.json_to_sheet(state.banco.map(m=>({
     "Fecha": m.fecha, "Cuenta": m.cuenta, "Tipo": m.tipo,
     "Detalle": m.detalle||"", "Monto": m.monto })));
+  const tS = XLSX.utils.json_to_sheet(state.terceros.map(t=>({
+    "CUIT": t.cuit, "Nombre": t.nombre||"" })));
   const pS = XLSX.utils.json_to_sheet(pagoChoferPorMes().map(([m,e])=>({
     "Mes": m, "Viajes": e.viajes, "Km": +e.km.toFixed(1),
     "Base (km x precio)": +e.base.toFixed(2), "Pago Chofer 16%": +(e.base*PCT_CHOFER).toFixed(2) })));
   const entH = state.rendiciones.filter(r=>r.tipo==="ENTREGA").reduce((s,r)=>s+r.monto,0);
   const renH = state.rendiciones.filter(r=>r.tipo==="RENDICION").reduce((s,r)=>s+r.monto,0);
-  const gT = state.gastos.reduce((s,r)=>s+r.monto,0);
+  const gT = state.gastos.reduce((s,r)=>s+gastoMonto(r),0);
   const gN = state.gastos.reduce((s,r)=>s+gastoNeto(r),0);
   const pagoT = state.viajes.reduce((s,v)=>s+viajePagoChofer(v),0);
   const sal = saldos();
@@ -1183,8 +1260,9 @@ function exportExcel(){
     {"Concepto":"Gastos: total c/IVA", "Monto": +gT.toFixed(2)},
     {"Concepto":"Gastos: neto", "Monto": +gN.toFixed(2)},
     {"Concepto":"Gastos: IVA discriminado", "Monto": +(gT-gN).toFixed(2)},
-    {"Concepto":"Viajes pendientes de facturar (c/IVA)", "Monto": +state.viajes.filter(v=>!v.facturado).reduce((s,v)=>s+viajeTotalCIva(v),0).toFixed(2)},
-    {"Concepto":"Viajes facturados (c/IVA)", "Monto": +state.viajes.filter(v=>v.facturado).reduce((s,v)=>s+viajeTotalCIva(v),0).toFixed(2)},
+    {"Concepto":"Viajes pendientes de facturar (c/IVA)", "Monto": +state.viajes.filter(v=>v.estado==="PEND").reduce((s,v)=>s+viajeTotalCIva(v),0).toFixed(2)},
+    {"Concepto":"Viajes facturados (c/IVA)", "Monto": +state.viajes.filter(v=>v.estado==="FACT").reduce((s,v)=>s+viajeTotalCIva(v),0).toFixed(2)},
+    {"Concepto":"Viajes propios (neto, no facturable)", "Monto": +state.viajes.filter(v=>v.estado==="PROPIO").reduce((s,v)=>s+viajeNeto(v),0).toFixed(2)},
     {"Concepto":"Pago chofer acumulado (16%)", "Monto": +pagoT.toFixed(2)},
     {"Concepto":"Entregado al chofer", "Monto": +entH.toFixed(2)},
     {"Concepto":"Rendido por el chofer", "Monto": +renH.toFixed(2)},
@@ -1199,6 +1277,7 @@ function exportExcel(){
   XLSX.utils.book_append_sheet(wb, rS, "Rendiciones");
   XLSX.utils.book_append_sheet(wb, cS, "E-Cheqs");
   XLSX.utils.book_append_sheet(wb, bS, "Banco");
+  XLSX.utils.book_append_sheet(wb, tS, "Terceros");
   XLSX.utils.book_append_sheet(wb, pS, "Pago Chofer");
   XLSX.utils.book_append_sheet(wb, resumen, "Resumen");
   XLSX.writeFile(wb, "fletes_"+hoyISO()+".xlsx");
@@ -1231,17 +1310,24 @@ document.getElementById("fileImport").addEventListener("change", function(){
     try{
       const wb = XLSX.read(new Uint8Array(e.target.result), {type:"array", cellDates:true});
       const sheet = n => wb.Sheets[n] ? XLSX.utils.sheet_to_json(wb.Sheets[n], {defval:""}) : [];
-      const nuevo = { gastos:[], viajes:[], rendiciones:[], echeqs:[], banco:[] };
+      const nuevo = { gastos:[], viajes:[], rendiciones:[], echeqs:[], banco:[], terceros:[] };
+      sheet("Terceros").forEach(r=>{
+        const cu = normCuit(r["CUIT"]||r["Cuit"]);
+        if(cu) nuevo.terceros.push({ cuit: cu, nombre: String(r["Nombre"]||r["Razón Social"]||"") });
+      });
       sheet("Gastos").forEach(r=>{
         if(!r["Fecha"] && !r["Detalle"] && !r["Total"] && !r["Monto"]) return;
         const alic = r["Alícuota"]!=="" && r["Alícuota"]!=null ? Number(r["Alícuota"]) : 21;
         const medio = String(r["Pago"]||"").trim().toUpperCase();
+        const comp = String(r["Comprobante"]||"").trim().toUpperCase();
         const g = { id: newId(), fecha: normFecha(r["Fecha"]),
           detalle: String(r["Detalle"]||""), categoria: String(r["Categoría"]||r["Categoria"]||"Otros"),
+          tipoComp: comp.startsWith("NOTA CRED")||comp==="NC" ? "NC" : comp.startsWith("NOTA DEB")||comp==="ND" ? "ND" : "FAC",
           factura: String(r["Nº Factura"]||r["N° Factura"]||r["Factura"]||""),
           alic: isNaN(alic)?21:alic,
-          monto: Number(r["Total"]!==""&&r["Total"]!=null ? r["Total"] : r["Monto"])||0,
+          monto: Math.abs(Number(r["Total"]!==""&&r["Total"]!=null ? r["Total"] : r["Monto"])||0),
           pago: null };
+        if(medio==="NC"){ g.pago = { medio:"NC", fecha: normFecha(r["Fecha Pago"])||g.fecha }; }
         if(medio==="EFECTIVO"||medio==="TRANSFERENCIA"||medio==="ECHEQ"){
           g.pago = { medio, fecha: normFecha(r["Fecha Pago"])||g.fecha };
           if(medio==="ECHEQ") g.pago._echeqNum = String(r["Nº E-Cheq"]||r["N° E-Cheq"]||"").trim();
@@ -1277,12 +1363,16 @@ document.getElementById("fileImport").addEventListener("change", function(){
       sheet("Viajes").forEach(r=>{
         if(!r["Fecha"] && !r["Cliente"]) return;
         const f2 = String(r["Facturado"]||"").trim().toUpperCase();
+        const estStr = String(r["Estado"]||"").trim().toUpperCase();
+        const estado = estStr.startsWith("PROP") ? "PROPIO" : estStr.startsWith("FACT") ? "FACT" : estStr.startsWith("PEND") ? "PEND"
+          : (f2==="SI"||f2==="SÍ"||f2==="TRUE"||f2==="1" ? "FACT" : "PEND");
         nuevo.viajes.push({ id: newId(), fecha: normFecha(r["Fecha"]),
-          cliente: String(r["Cliente"]||""), ruta: String(r["Ruta"]||""), dte: String(r["DTE"]||""),
+          cliente: String(r["Cliente"]||""), cuit: normCuit(r["CUIT"]), estado: estado,
+          ruta: String(r["Ruta"]||""), dte: String(r["DTE"]||""),
           km: Number(r["Km"])||0, precio: Number(r["Precio x Km"]||r["Precio"])||0,
           gastos: Number(r["Arranque"]!==""&&r["Arranque"]!=null ? r["Arranque"] : r["Gastos"])||0,
           peajes: Number(r["Peajes"])||0, seguro: Number(r["Seguro"])||0,
-          facturado: f2==="SI"||f2==="SÍ"||f2==="TRUE"||f2==="1",
+          facturado: estado==="FACT",
           factura: String(r["Nº Factura"]||r["N° Factura"]||"") });
       });
       sheet("Rendiciones").forEach(r=>{
@@ -1299,6 +1389,12 @@ document.getElementById("fileImport").addEventListener("change", function(){
       await insertar("gastos", nuevo.gastos); await insertar("viajes", nuevo.viajes);
       await insertar("rendiciones", nuevo.rendiciones); await insertar("banco", nuevo.banco);
       await insertar("echeqs", nuevo.echeqs);
+      if(nuevo.terceros.length){
+        const {error: eT} = await sb.from("terceros").delete().not("cuit","is",null);
+        if(eT) throw eT;
+        const {error: eT2} = await sb.from("terceros").insert(nuevo.terceros.map(MAP.terceros.to));
+        if(eT2) throw eT2;
+      }
       await loadAll(); renderAll(); saveState();
       toast("Importado: "+state.gastos.length+" gastos, "+state.viajes.length+" viajes, "+state.rendiciones.length+" rendiciones ✓");
     }catch(err){
@@ -1364,8 +1460,10 @@ async function migrarLocalSiCorresponde(){
     const e = (d.echeqs||[]).map(r=>{ const nid = newId(); idMap[r.id] = nid; return {...r, id: nid, gastoId: idMap[r.gastoId] || null}; });
     g.forEach(x=>{
       if(x.alic==null) x.alic = 21;
+      if(!x.tipoComp) x.tipoComp = "FAC";
       if(x.pago && x.pago.echeqId != null) x.pago = {...x.pago, echeqId: idMap[x.pago.echeqId] || null};
     });
+    v.forEach(x=>{ if(!x.estado) x.estado = x.facturado ? "FACT" : "PEND"; });
     const ins = async (t, rows)=>{
       if(!rows.length) return;
       const { error } = await sb.from(t).insert(rows.map(MAP[t].to));
