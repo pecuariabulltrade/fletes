@@ -182,6 +182,8 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     <button data-tab="viajes">Viajes <span class="cnt" id="cntViajes">0</span></button>
     <button data-tab="rendiciones">Rendiciones <span class="cnt" id="cntRend">0</span></button>
     <button data-tab="banco">Banco <span class="cnt" id="cntBanco">0</span></button>
+    <button data-tab="cheques">Cheques <span class="cnt" id="cntCheques">0</span></button>
+    <button data-tab="ctacte">Ctas. Ctes.</button>
   </nav>
 
   <!-- ================= GASTOS ================= -->
@@ -198,6 +200,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         <div class="grid">
           <label class="f">Fecha<input type="date" id="gFecha" required></label>
           <label class="f">Detalle / Proveedor<input type="text" id="gDetalle" placeholder="Ej: YPF ruta 9" required></label>
+          <label class="f">CUIT proveedor (opcional)<input type="text" id="gCuit" inputmode="numeric" placeholder="30123456789"><span class="fine" id="gCuitHint"></span></label>
           <label class="f">Comprobante
             <select id="gTipoComp">
               <option value="FAC">Factura</option>
@@ -237,13 +240,15 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
           <label class="f">Medio de pago
             <select id="pMedio">
               <option value="TRANSFERENCIA">Transferencia (sale del banco)</option>
-              <option value="ECHEQ">E-cheq (debita cuando entra al banco)</option>
               <option value="EFECTIVO">Efectivo</option>
+              <option value="ECHEQ">Cheque propio / e-cheq (debita cuando entra al banco)</option>
+              <option value="CHEQUE3">Cheque de tercero (de la cartera)</option>
             </select>
           </label>
           <label class="f">Fecha de pago<input type="date" id="pFecha" required></label>
-          <label class="f" id="pNumWrap" style="display:none">Nº e-cheq<input type="text" id="pNum" placeholder="Ej: 00123456"></label>
-          <label class="f" id="pFPagoWrap" style="display:none">Fecha de cobro del e-cheq<input type="date" id="pFPago"></label>
+          <label class="f" id="pNumWrap" style="display:none">Nº cheque propio<input type="text" id="pNum" placeholder="Ej: 00123456"></label>
+          <label class="f" id="pFPagoWrap" style="display:none">Fecha de cobro del cheque<input type="date" id="pFPago"></label>
+          <label class="f" id="pCheqWrap" style="display:none">Cheque de la cartera<select id="pCheq"></select></label>
         </div>
         <div class="form-actions">
           <button class="btn primary" type="submit">Confirmar pago</button>
@@ -287,6 +292,28 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
           <button class="btn primary" type="submit" id="vSubmit">Agregar viaje</button>
           <span class="cancel-link" id="vCancel">Cancelar edición</span>
           <span class="calc-preview" id="vPreview"></span>
+        </div>
+      </form>
+    </div>
+    <div class="card" id="cobroPanel" style="display:none; border-color:var(--accent);">
+      <h2>💰 Cobrar viaje: <span id="cobroInfo" style="font-weight:500;"></span></h2>
+      <form id="formCobro">
+        <div class="grid">
+          <label class="f">Medio de cobro
+            <select id="cbMedio">
+              <option value="EFECTIVO">Efectivo (entra a caja)</option>
+              <option value="TRANSFERENCIA">Transferencia (entra al banco)</option>
+              <option value="CHEQUE">Cheque de tercero (va a la cartera)</option>
+            </select>
+          </label>
+          <label class="f">Fecha<input type="date" id="cbFecha" required></label>
+          <label class="f">Monto cobrado ($)<input type="number" id="cbMonto" min="0" step="0.01" required></label>
+          <label class="f" id="cbNumWrap" style="display:none">Nº cheque<input type="text" id="cbNum"></label>
+          <label class="f" id="cbFPagoWrap" style="display:none">Fecha de cobro del cheque<input type="date" id="cbFPago"></label>
+        </div>
+        <div class="form-actions">
+          <button class="btn primary" type="submit">Confirmar cobro</button>
+          <span class="cancel-link" id="cbCancel" style="display:inline">Cancelar</span>
         </div>
       </form>
     </div>
@@ -393,9 +420,50 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         <option value="EFECTIVO">Solo efectivo</option>
       </select>
       <div class="spacer"></div>
-      <span class="hint">Los pagos de gastos y los e-cheqs debitados aparecen solos acá</span>
+      <span class="hint">Pagos, cobros, cheques debitados y depósitos aparecen solos acá</span>
     </div>
     <div class="tblwrap" id="tblBanco"></div>
+  </section>
+
+  <!-- ================= CHEQUES EN CARTERA ================= -->
+  <section class="tab" id="tab-cheques">
+    <div class="kpis">
+      <div class="kpi"><div class="lbl">En cartera</div><div class="val" id="kChCartera">$ 0</div><div class="sub" id="kChCarteraSub"></div></div>
+      <div class="kpi"><div class="lbl">Aplicados a pagos</div><div class="val" id="kChAplicados">$ 0</div></div>
+      <div class="kpi"><div class="lbl">Depositados</div><div class="val pos" id="kChDepositados">$ 0</div></div>
+    </div>
+    <div class="card">
+      <h2>Cargar cheque recibido (si no vino de un cobro)</h2>
+      <form id="formCheque">
+        <div class="grid">
+          <label class="f">Nº cheque<input type="text" id="chNum" required></label>
+          <label class="f">Recibido de<input type="text" id="chOrigen" placeholder="Cliente / origen"></label>
+          <label class="f">Fecha recibido<input type="date" id="chEmision" required></label>
+          <label class="f">Fecha de cobro<input type="date" id="chFPago"></label>
+          <label class="f">Monto ($)<input type="number" id="chMonto" min="0" step="0.01" required></label>
+        </div>
+        <div class="form-actions">
+          <button class="btn primary" type="submit">Agregar a la cartera</button>
+        </div>
+      </form>
+    </div>
+    <div class="filters">
+      <div class="spacer"></div>
+      <span class="hint">Los cheques que cobrás en viajes entran solos · Depositar los suma al banco · Se aplican a pagos desde Gastos</span>
+    </div>
+    <div class="tblwrap" id="tblCheques"></div>
+  </section>
+
+  <!-- ================= CUENTAS CORRIENTES ================= -->
+  <section class="tab" id="tab-ctacte">
+    <div class="card">
+      <h2>Cuenta corriente de clientes — facturado vs. cobrado</h2>
+      <div class="tblwrap" style="border:none; margin-bottom:0;" id="tblCCClientes"></div>
+    </div>
+    <div class="card">
+      <h2>Cuenta corriente de proveedores — comprado vs. pagado</h2>
+      <div class="tblwrap" style="border:none; margin-bottom:0;" id="tblCCProv"></div>
+    </div>
   </section>
 </div>
 
@@ -413,17 +481,17 @@ const SB_KEY = "sb_publishable_U17zHkiQ-roiQz5TMXQswA_Z3Dll8g_";
 const sb = supabase.createClient(SB_URL, SB_KEY);
 const AUTH_DOMAIN = "@fletes.app";
 
-let state = { gastos: [], viajes: [], rendiciones: [], echeqs: [], banco: [], terceros: [] };
+let state = { gastos: [], viajes: [], rendiciones: [], echeqs: [], banco: [], terceros: [], cheques: [] };
 
 /* Mapeo app <-> base */
 const MAP = {
   gastos: {
-    to: r => ({ id:r.id, fecha:r.fecha||null, detalle:r.detalle||"", categoria:r.categoria||"Otros", factura:r.factura||"", alic:Number(r.alic)||0, monto:Number(r.monto)||0, pago:r.pago||null, tipo_comp:r.tipoComp||"FAC" }),
-    from: d => ({ id:d.id, fecha:d.fecha||"", detalle:d.detalle||"", categoria:d.categoria||"Otros", factura:d.factura||"", alic:d.alic==null?21:Number(d.alic), monto:Number(d.monto)||0, pago:d.pago||null, tipoComp:d.tipo_comp||"FAC" })
+    to: r => ({ id:r.id, fecha:r.fecha||null, detalle:r.detalle||"", categoria:r.categoria||"Otros", factura:r.factura||"", alic:Number(r.alic)||0, monto:Number(r.monto)||0, pago:r.pago||null, tipo_comp:r.tipoComp||"FAC", cuit:r.cuit||"" }),
+    from: d => ({ id:d.id, fecha:d.fecha||"", detalle:d.detalle||"", categoria:d.categoria||"Otros", factura:d.factura||"", alic:d.alic==null?21:Number(d.alic), monto:Number(d.monto)||0, pago:d.pago||null, tipoComp:d.tipo_comp||"FAC", cuit:d.cuit||"" })
   },
   viajes: {
-    to: r => ({ id:r.id, fecha:r.fecha||null, cliente:r.cliente||"", ruta:r.ruta||"", dte:r.dte||"", cuit:r.cuit||"", km:Number(r.km)||0, precio:Number(r.precio)||0, gastos:Number(r.gastos)||0, peajes:Number(r.peajes)||0, seguro:Number(r.seguro)||0, factura:r.factura||"", estado:r.estado||"PEND", facturado:(r.estado||"PEND")==="FACT" }),
-    from: d => ({ id:d.id, fecha:d.fecha||"", cliente:d.cliente||"", ruta:d.ruta||"", dte:d.dte||"", cuit:d.cuit||"", km:Number(d.km)||0, precio:Number(d.precio)||0, gastos:Number(d.gastos)||0, peajes:Number(d.peajes)||0, seguro:Number(d.seguro)||0, factura:d.factura||"", estado:d.estado||(d.facturado?"FACT":"PEND"), facturado:!!d.facturado })
+    to: r => ({ id:r.id, fecha:r.fecha||null, cliente:r.cliente||"", ruta:r.ruta||"", dte:r.dte||"", cuit:r.cuit||"", km:Number(r.km)||0, precio:Number(r.precio)||0, gastos:Number(r.gastos)||0, peajes:Number(r.peajes)||0, seguro:Number(r.seguro)||0, factura:r.factura||"", estado:r.estado||"PEND", facturado:(r.estado||"PEND")==="FACT", cobro:r.cobro||null }),
+    from: d => ({ id:d.id, fecha:d.fecha||"", cliente:d.cliente||"", ruta:d.ruta||"", dte:d.dte||"", cuit:d.cuit||"", km:Number(d.km)||0, precio:Number(d.precio)||0, gastos:Number(d.gastos)||0, peajes:Number(d.peajes)||0, seguro:Number(d.seguro)||0, factura:d.factura||"", estado:d.estado||(d.facturado?"FACT":"PEND"), facturado:!!d.facturado, cobro:d.cobro||null })
   },
   rendiciones: {
     to: r => ({ id:r.id, fecha:r.fecha||null, tipo:r.tipo||"ENTREGA", detalle:r.detalle||"", monto:Number(r.monto)||0 }),
@@ -440,6 +508,10 @@ const MAP = {
   terceros: {
     to: r => ({ cuit: normCuit(r.cuit), nombre: r.nombre||"" }),
     from: d => ({ cuit: d.cuit||"", nombre: d.nombre||"" })
+  },
+  cheques: {
+    to: r => ({ id:r.id, num:r.num||"", origen:r.origen||"", emision:r.emision||null, fecha_pago:r.fechaPago||null, monto:Number(r.monto)||0, estado:r.estado||"CARTERA", gasto_id:r.gastoId||null, viaje_id:r.viajeId||null }),
+    from: d => ({ id:d.id, num:d.num||"", origen:d.origen||"", emision:d.emision||"", fechaPago:d.fecha_pago||"", monto:Number(d.monto)||0, estado:d.estado||"CARTERA", gastoId:d.gasto_id||null, viajeId:d.viaje_id||null })
   }
 };
 function normCuit(s){ return String(s==null?"":s).replace(/\D/g,""); }
@@ -456,7 +528,7 @@ async function fetchTodo(t){
   return { data: filas };
 }
 async function loadAll(){
-  const tablas = ["gastos","viajes","rendiciones","echeqs","banco","terceros"];
+  const tablas = ["gastos","viajes","rendiciones","echeqs","banco","terceros","cheques"];
   const res = await Promise.all(tablas.map(t => fetchTodo(t)));
   for(let i=0;i<tablas.length;i++){
     if(res[i].error){ dbError(res[i].error); return false; }
@@ -571,6 +643,20 @@ function deleteRow(kind, id){
         const j = state.echeqs.findIndex(c=>c.id===g.pago.echeqId);
         if(j>=0) state.echeqs.splice(j,1);
       }
+      if(g.pago && g.pago.chequeId){
+        const c3 = state.cheques.find(x=>x.id===g.pago.chequeId);
+        if(c3){ c3.estado="CARTERA"; c3.gastoId=null; dbUpsert("cheques", c3); }
+      }
+    }
+    if(kind==="viajes"){
+      const v = list[i];
+      if(v.cobro && v.cobro.chequeId){
+        const c3 = state.cheques.find(x=>x.id===v.cobro.chequeId);
+        if(c3 && c3.estado==="CARTERA"){
+          state.cheques.splice(state.cheques.indexOf(c3),1);
+          dbDelete("cheques", c3.id);
+        } else if(c3){ c3.viajeId=null; dbUpsert("cheques", c3); }
+      }
     }
     list.splice(i,1);
     dbDelete(kind, id);   // en la base, borrar un gasto borra solo su e-cheq asociado
@@ -601,6 +687,14 @@ function previewGasto(){
 }
 ["gMonto","gAlic"].forEach(id=>document.getElementById(id).addEventListener("input", previewGasto));
 document.getElementById("gAlic").addEventListener("change", previewGasto);
+document.getElementById("gCuit").addEventListener("input", ()=>{
+  const c = normCuit(document.getElementById("gCuit").value);
+  const hint = document.getElementById("gCuitHint");
+  if(c.length >= 11){
+    const t = state.terceros.find(x=>normCuit(x.cuit)===c);
+    hint.textContent = t ? "✓ " + t.nombre : "CUIT no registrado (se agrupa igual en la cta. cte.)";
+  }else{ hint.textContent = ""; }
+});
 formGasto.addEventListener("submit", e=>{
   e.preventDefault();
   const prevG = editGasto ? state.gastos.find(r=>r.id===editGasto) : null;
@@ -609,6 +703,7 @@ formGasto.addEventListener("submit", e=>{
     fecha: document.getElementById("gFecha").value,
     detalle: document.getElementById("gDetalle").value.trim(),
     tipoComp: document.getElementById("gTipoComp").value,
+    cuit: normCuit(document.getElementById("gCuit").value),
     categoria: document.getElementById("gCategoria").value,
     factura: document.getElementById("gFactura").value.trim(),
     alic: Number(document.getElementById("gAlic").value)||0,
@@ -640,6 +735,7 @@ function editGastoRow(id){
   document.getElementById("gFecha").value=r.fecha;
   document.getElementById("gDetalle").value=r.detalle;
   document.getElementById("gTipoComp").value=r.tipoComp||"FAC";
+  document.getElementById("gCuit").value=r.cuit||"";
   document.getElementById("gCategoria").value=r.categoria;
   document.getElementById("gFactura").value=r.factura||"";
   document.getElementById("gAlic").value=String(r.alic);
@@ -711,11 +807,15 @@ function pagoCell(r){
   }
   if(!r.pago) return `<button class="btn small" onclick="pagarGasto('${r.id}')">Pagar</button>`;
   const m = r.pago.medio;
-  const lbl = m==="EFECTIVO" ? "Efectivo" : m==="TRANSFERENCIA" ? "Transf." : "E-cheq";
+  const lbl = m==="EFECTIVO" ? "Efectivo" : m==="TRANSFERENCIA" ? "Transf." : m==="CHEQUE3" ? "Cheq. 3ro" : "Cheq. propio";
   let extra = "";
   if(m==="ECHEQ"){
     const c = state.echeqs.find(x=>x.id===r.pago.echeqId);
     extra = c ? `<div class="fine">Nº ${esc(c.num)}${c.debitado ? " · debitado" : " · por debitar"}</div>` : "";
+  }
+  if(m==="CHEQUE3"){
+    const c3 = state.cheques.find(x=>x.id===r.pago.chequeId);
+    extra = c3 ? `<div class="fine">Nº ${esc(c3.num)} de ${esc(c3.origen)||"cartera"}</div>` : "";
   }
   return `<span class="chip click fact" onclick="undoPago('${r.id}')" title="Pagado el ${fmtFecha(r.pago.fecha)} — tocar para deshacer">✓ ${lbl}</span>${extra}`;
 }
@@ -743,10 +843,19 @@ function pagarGasto(id){
   document.getElementById("payPanel").scrollIntoView({behavior:"smooth", block:"center"});
 }
 function toggleEcheqFields(){
-  const esEcheq = document.getElementById("pMedio").value === "ECHEQ";
+  const medio = document.getElementById("pMedio").value;
+  const esEcheq = medio === "ECHEQ", esCheq3 = medio === "CHEQUE3";
   document.getElementById("pNumWrap").style.display = esEcheq ? "flex" : "none";
   document.getElementById("pFPagoWrap").style.display = esEcheq ? "flex" : "none";
   document.getElementById("pNum").required = esEcheq;
+  document.getElementById("pCheqWrap").style.display = esCheq3 ? "flex" : "none";
+  if(esCheq3){
+    const sel = document.getElementById("pCheq");
+    const disp = state.cheques.filter(c=>c.estado==="CARTERA");
+    sel.innerHTML = disp.length
+      ? disp.map(c=>`<option value="${c.id}">Nº ${esc(c.num)} — ${money(c.monto)} — cobro ${fmtFecha(c.fechaPago)||"s/f"}</option>`).join("")
+      : '<option value="">(no hay cheques en cartera)</option>';
+  }
 }
 document.getElementById("pMedio").addEventListener("change", toggleEcheqFields);
 function cerrarPayPanel(){
@@ -775,9 +884,19 @@ document.getElementById("formPay").addEventListener("submit", e=>{
     pago.echeqId = c.id;
     dbUpsert("echeqs", c);
   }
+  if(medio==="CHEQUE3"){
+    const cid = document.getElementById("pCheq").value;
+    const c3 = state.cheques.find(x=>x.id===cid && x.estado==="CARTERA");
+    if(!c3){ toast("Elegí un cheque de la cartera"); return; }
+    c3.estado = "APLICADO"; c3.gastoId = g.id;
+    dbUpsert("cheques", c3);
+    pago.chequeId = c3.id;
+  }
   g.pago = pago;
   cerrarPayPanel(); dbUpsert("gastos", g); renderAll();
-  toast(medio==="ECHEQ" ? "Pagado con e-cheq — quedó en la solapa Banco para conciliar" : "Pago registrado ✓");
+  toast(medio==="ECHEQ" ? "Pagado con cheque propio — quedó en Banco para conciliar"
+    : medio==="CHEQUE3" ? "Pagado con cheque de tercero — salió de la cartera ✓"
+    : "Pago registrado ✓");
 }
 );
 function undoPago(id){
@@ -787,6 +906,10 @@ function undoPago(id){
     const j = state.echeqs.findIndex(c=>c.id===g.pago.echeqId);
     if(j>=0) state.echeqs.splice(j,1);
     dbDelete("echeqs", g.pago.echeqId);
+  }
+  if(g.pago.chequeId){
+    const c3 = state.cheques.find(x=>x.id===g.pago.chequeId);
+    if(c3){ c3.estado = "CARTERA"; c3.gastoId = null; dbUpsert("cheques", c3); }
   }
   g.pago = null;
   dbUpsert("gastos", g); renderAll(); toast("Pago deshecho");
@@ -885,6 +1008,74 @@ function editViajeRow(id){
   previewViaje();
   document.getElementById("tab-viajes").scrollIntoView({behavior:"smooth"});
 }
+/* ---- Cobro de viajes ---- */
+let cobrandoViaje = null;
+function cobrarViaje(id){
+  const v = state.viajes.find(x=>x.id===id); if(!v || v.cobro) return;
+  cobrandoViaje = id;
+  document.getElementById("cobroInfo").textContent = v.cliente + " — " + money(viajeTotalCIva(v)) + " c/IVA";
+  document.getElementById("cbFecha").value = hoyISO();
+  document.getElementById("cbMonto").value = +viajeTotalCIva(v).toFixed(2);
+  document.getElementById("cbMedio").value = "TRANSFERENCIA";
+  document.getElementById("cbNum").value = "";
+  document.getElementById("cbFPago").value = "";
+  toggleCobroFields();
+  document.getElementById("cobroPanel").style.display = "block";
+  document.getElementById("cobroPanel").scrollIntoView({behavior:"smooth", block:"center"});
+}
+function toggleCobroFields(){
+  const esCheque = document.getElementById("cbMedio").value === "CHEQUE";
+  document.getElementById("cbNumWrap").style.display = esCheque ? "flex" : "none";
+  document.getElementById("cbFPagoWrap").style.display = esCheque ? "flex" : "none";
+  document.getElementById("cbNum").required = esCheque;
+}
+document.getElementById("cbMedio").addEventListener("change", toggleCobroFields);
+function cerrarCobroPanel(){
+  cobrandoViaje = null;
+  document.getElementById("cobroPanel").style.display = "none";
+}
+document.getElementById("cbCancel").addEventListener("click", cerrarCobroPanel);
+document.getElementById("formCobro").addEventListener("submit", e=>{
+  e.preventDefault();
+  const v = state.viajes.find(x=>x.id===cobrandoViaje);
+  if(!v){ cerrarCobroPanel(); return; }
+  const medio = document.getElementById("cbMedio").value;
+  const fecha = document.getElementById("cbFecha").value;
+  const monto = Number(document.getElementById("cbMonto").value)||0;
+  const cobro = { medio, fecha, monto };
+  if(medio==="CHEQUE"){
+    const num = document.getElementById("cbNum").value.trim();
+    if(!num){ toast("Cargá el número del cheque"); return; }
+    const c = { id: newId(), num, origen: v.cliente,
+      emision: fecha, fechaPago: document.getElementById("cbFPago").value || fecha,
+      monto, estado: "CARTERA", gastoId: null, viajeId: v.id };
+    state.cheques.push(c);
+    dbUpsert("cheques", c);
+    cobro.chequeId = c.id;
+  }
+  v.cobro = cobro;
+  cerrarCobroPanel(); dbUpsert("viajes", v); renderAll();
+  toast(medio==="CHEQUE" ? "Cobrado con cheque — entró a la cartera ✓"
+    : medio==="TRANSFERENCIA" ? "Cobrado ✓ — ingresó al banco"
+    : "Cobrado ✓ — ingresó a caja");
+});
+function undoCobro(id){
+  const v = state.viajes.find(x=>x.id===id); if(!v || !v.cobro) return;
+  if(v.cobro.chequeId){
+    const c = state.cheques.find(x=>x.id===v.cobro.chequeId);
+    if(c && c.estado!=="CARTERA"){
+      toast("El cheque de este cobro ya fue " + (c.estado==="APLICADO" ? "aplicado a un pago" : "depositado") + ". Deshacé eso primero.");
+      return;
+    }
+    if(!confirm("¿Deshacer el cobro? Se saca el cheque Nº "+(c?c.num:"")+" de la cartera.")) return;
+    if(c){ state.cheques.splice(state.cheques.indexOf(c),1); dbDelete("cheques", c.id); }
+  }else{
+    if(!confirm("¿Deshacer el cobro de \""+v.cliente+"\"?")) return;
+  }
+  v.cobro = null;
+  dbUpsert("viajes", v); renderAll(); toast("Cobro deshecho");
+}
+
 function toggleFacturado(id){
   const r = state.viajes.find(x=>x.id===id); if(!r) return;
   const next = r.estado==="PEND" ? "FACT" : r.estado==="FACT" ? "PROPIO" : "PEND";
@@ -940,7 +1131,8 @@ function renderViajes(){
       <td class="num">${r.estado==="PROPIO" ? "—" : `<b>${money(viajeTotalCIva(r))}</b>`}</td>
       <td><span class="chip click ${r.estado==="FACT"?"fact":r.estado==="PROPIO"?"propio":"pend"}" onclick="toggleFacturado('${r.id}')" title="Tocar para cambiar: Pendiente → Facturado → Propio">
         ${r.estado==="FACT" ? "✓ Facturado" : r.estado==="PROPIO" ? "Propio" : "Pendiente"}</span>
-        ${r.factura && r.estado==="FACT" ? `<div class="fine">Fact. ${esc(r.factura)}</div>` : ""}</td>
+        ${r.factura && r.estado==="FACT" ? `<div class="fine">Fact. ${esc(r.factura)}</div>` : ""}
+        ${cobroCell(r)}</td>
       <td class="actions">
         <button class="btn small" onclick="editViajeRow('${r.id}')">Editar</button>
         <button class="btn small" onclick="armDelete(this,'viajes','${r.id}')">Borrar</button>
@@ -948,6 +1140,15 @@ function renderViajes(){
     `</tbody><tfoot><tr><td colspan="7">Total</td>
       <td class="num">${money(tNeto)}</td><td class="num">${money(tNetoFac*IVA_VIAJES)}</td><td class="num">${money(tNetoFac*(1+IVA_VIAJES))}</td><td colspan="2"></td>
     </tr></tfoot></table>`;
+}
+function cobroCell(r){
+  if(r.cobro){
+    const m = r.cobro.medio;
+    const lbl = m==="EFECTIVO" ? "Efvo." : m==="TRANSFERENCIA" ? "Transf." : "Cheque";
+    return `<div style="margin-top:3px"><span class="chip click fact" onclick="undoCobro('${r.id}')" title="Cobrado el ${fmtFecha(r.cobro.fecha)} — tocar para deshacer">$ Cobrado · ${lbl}</span></div>`;
+  }
+  if(r.estado==="PROPIO") return "";
+  return `<div style="margin-top:3px"><button class="btn small" onclick="cobrarViaje('${r.id}')">Cobrar</button></div>`;
 }
 document.getElementById("vMes").addEventListener("change", renderViajes);
 document.getElementById("vEstado").addEventListener("change", renderViajes);
@@ -1084,6 +1285,13 @@ function saldos(){
     else if(g.pago.medio==="EFECTIVO") ef-=g.monto;
   });
   state.echeqs.forEach(c=>{ if(c.debitado) banco-=echeqMonto(c); });
+  state.viajes.forEach(v=>{
+    if(!v.cobro) return;
+    const m = Number(v.cobro.monto)||0;
+    if(v.cobro.medio==="TRANSFERENCIA") banco+=m;
+    else if(v.cobro.medio==="EFECTIVO") ef+=m;
+  });
+  state.cheques.forEach(c=>{ if(c.estado==="DEPOSITADO") banco+=Number(c.monto)||0; });
   return { banco, ef };
 }
 function movimientosBanco(){
@@ -1098,7 +1306,18 @@ function movimientosBanco(){
   });
   state.echeqs.forEach(c=>{
     if(c.debitado) list.push({ fecha:c.fechaPago||c.emision, cuenta:"BANCO", tipo:"EGRESO",
-      detalle:"Débito e-cheq Nº "+c.num+" — "+c.detalle, monto:echeqMonto(c), manual:false });
+      detalle:"Débito cheque propio Nº "+c.num+" — "+c.detalle, monto:echeqMonto(c), manual:false });
+  });
+  state.viajes.forEach(v=>{
+    if(!v.cobro) return;
+    if(v.cobro.medio==="TRANSFERENCIA" || v.cobro.medio==="EFECTIVO"){
+      list.push({ fecha:v.cobro.fecha||v.fecha, cuenta:v.cobro.medio==="TRANSFERENCIA"?"BANCO":"EFECTIVO",
+        tipo:"INGRESO", detalle:"Cobro viaje: "+v.cliente, monto:Number(v.cobro.monto)||0, manual:false });
+    }
+  });
+  state.cheques.forEach(c=>{
+    if(c.estado==="DEPOSITADO") list.push({ fecha:c.fechaPago||c.emision, cuenta:"BANCO", tipo:"INGRESO",
+      detalle:"Depósito cheque Nº "+c.num+(c.origen?" ("+c.origen+")":""), monto:Number(c.monto)||0, manual:false });
   });
   return list;
 }
@@ -1222,20 +1441,160 @@ function renderBanco(){
 document.getElementById("bMes").addEventListener("change", renderBanco);
 document.getElementById("bCuentaFiltro").addEventListener("change", renderBanco);
 
+/* ============ CHEQUES EN CARTERA ============ */
+document.getElementById("formCheque").addEventListener("submit", e=>{
+  e.preventDefault();
+  const rec = {
+    id: newId(),
+    num: document.getElementById("chNum").value.trim(),
+    origen: document.getElementById("chOrigen").value.trim(),
+    emision: document.getElementById("chEmision").value,
+    fechaPago: document.getElementById("chFPago").value || document.getElementById("chEmision").value,
+    monto: Number(document.getElementById("chMonto").value)||0,
+    estado: "CARTERA", gastoId: null, viajeId: null
+  };
+  state.cheques.push(rec);
+  document.getElementById("formCheque").reset();
+  document.getElementById("chEmision").value = hoyISO();
+  dbUpsert("cheques", rec); renderAll();
+  toast("Cheque agregado a la cartera ✓");
+});
+function depositarCheque(id){
+  const c = state.cheques.find(x=>x.id===id); if(!c || c.estado!=="CARTERA") return;
+  if(!confirm("¿Depositar el cheque Nº "+c.num+" por "+money(c.monto)+"? Se suma al saldo del banco.")) return;
+  c.estado = "DEPOSITADO";
+  dbUpsert("cheques", c); renderAll();
+  toast("Cheque depositado — ingresó al banco ✓");
+}
+function undoDeposito(id){
+  const c = state.cheques.find(x=>x.id===id); if(!c || c.estado!=="DEPOSITADO") return;
+  if(!confirm("¿Volver el cheque Nº "+c.num+" a la cartera?")) return;
+  c.estado = "CARTERA";
+  dbUpsert("cheques", c); renderAll();
+  toast("Cheque devuelto a la cartera");
+}
+function renderCheques(){
+  const cartera = state.cheques.filter(c=>c.estado==="CARTERA");
+  const aplicados = state.cheques.filter(c=>c.estado==="APLICADO");
+  const depositados = state.cheques.filter(c=>c.estado==="DEPOSITADO");
+  const suma = a => a.reduce((s,c)=>s+(Number(c.monto)||0),0);
+  document.getElementById("kChCartera").textContent = money(suma(cartera));
+  document.getElementById("kChCarteraSub").textContent = cartera.length + (cartera.length===1?" cheque":" cheques");
+  document.getElementById("kChAplicados").textContent = money(suma(aplicados));
+  document.getElementById("kChDepositados").textContent = money(suma(depositados));
+  document.getElementById("cntCheques").textContent = cartera.length;
+
+  const wrap = document.getElementById("tblCheques");
+  if(!state.cheques.length){ wrap.innerHTML = '<div class="empty">Sin cheques todavía. Entran solos al cobrar un viaje con cheque, o cargalos arriba.</div>'; return; }
+  const orden = { CARTERA:0, APLICADO:1, DEPOSITADO:2 };
+  const rows = [...state.cheques].sort((a,b)=> (orden[a.estado]-orden[b.estado]) || (a.fechaPago||"").localeCompare(b.fechaPago||""));
+  wrap.innerHTML = `<table class="wide"><thead><tr>
+      <th>Nº cheque</th><th>Recibido de</th><th>Recibido</th><th>Fecha de cobro</th><th class="num">Monto</th><th>Estado</th><th></th>
+    </tr></thead><tbody>` +
+    rows.map(c=>{
+      let estado = "", acciones = "";
+      if(c.estado==="CARTERA"){
+        estado = '<span class="chip pend">En cartera</span>';
+        acciones = `<button class="btn small" onclick="depositarCheque('${c.id}')">Depositar</button>` +
+          (!c.viajeId ? ` <button class="btn small" onclick="armDelete(this,'cheques','${c.id}')">Borrar</button>` : "");
+      }else if(c.estado==="APLICADO"){
+        const g = state.gastos.find(x=>x.id===c.gastoId);
+        estado = '<span class="chip entrega">Aplicado a pago</span>' + (g?`<div class="fine">${esc(g.detalle)}</div>`:"");
+      }else{
+        estado = `<span class="chip click fact" onclick="undoDeposito('${c.id}')" title="Tocar para volverlo a la cartera">✓ Depositado</span>`;
+      }
+      return `<tr>
+        <td><b>${esc(c.num)}</b></td>
+        <td>${esc(c.origen)||"—"}</td>
+        <td>${fmtFecha(c.emision)}</td>
+        <td>${fmtFecha(c.fechaPago)}</td>
+        <td class="num">${money(c.monto)}</td>
+        <td>${estado}</td>
+        <td class="actions">${acciones}</td></tr>`;
+    }).join("") +
+    `</tbody><tfoot><tr><td colspan="4">En cartera</td><td class="num">${money(suma(cartera))}</td><td colspan="2"></td></tr></tfoot></table>`;
+}
+
+/* ============ CUENTAS CORRIENTES ============ */
+function renderCtaCte(){
+  /* Clientes */
+  const cli = new Map();
+  state.viajes.forEach(v=>{
+    if(v.estado==="PROPIO") return;
+    const key = v.cuit || (v.cliente||"").trim().toUpperCase();
+    if(!key) return;
+    const e = cli.get(key) || { nombre: v.cliente, cuit: v.cuit||"", viajes:0, fact:0, cobrado:0 };
+    e.viajes++;
+    if(v.estado==="FACT") e.fact += viajeTotalCIva(v);
+    if(v.cobro) e.cobrado += Number(v.cobro.monto)||0;
+    cli.set(key, e);
+  });
+  const wrapC = document.getElementById("tblCCClientes");
+  const filasC = [...cli.values()].sort((a,b)=>(b.fact-b.cobrado)-(a.fact-a.cobrado));
+  if(!filasC.length){ wrapC.innerHTML = '<div class="empty">Sin viajes facturables todavía.</div>'; }
+  else{
+    let tF=0,tC=0;
+    wrapC.innerHTML = `<table><thead><tr>
+        <th>Cliente</th><th class="num">Viajes</th><th class="num">Facturado c/IVA</th><th class="num">Cobrado</th><th class="num">Saldo a cobrar</th>
+      </tr></thead><tbody>` +
+      filasC.map(e=>{
+        tF+=e.fact; tC+=e.cobrado;
+        const saldo = e.fact - e.cobrado;
+        return `<tr>
+          <td>${esc(e.nombre)}${e.cuit?`<div class="fine">${esc(e.cuit)}</div>`:""}</td>
+          <td class="num">${e.viajes}</td>
+          <td class="num">${money(e.fact)}</td>
+          <td class="num">${money(e.cobrado)}</td>
+          <td class="num"><b>${money(saldo)}</b></td></tr>`;
+      }).join("") +
+      `</tbody><tfoot><tr><td colspan="2">Total</td><td class="num">${money(tF)}</td><td class="num">${money(tC)}</td><td class="num">${money(tF-tC)}</td></tr></tfoot></table>`;
+  }
+  /* Proveedores */
+  const prov = new Map();
+  state.gastos.forEach(g=>{
+    const key = g.cuit || (g.detalle||"").trim().toUpperCase();
+    if(!key) return;
+    const t = g.cuit ? state.terceros.find(x=>normCuit(x.cuit)===normCuit(g.cuit)) : null;
+    const e = prov.get(key) || { nombre: t ? t.nombre : g.detalle, cuit: g.cuit||"", comp:0, total:0, pagado:0 };
+    e.comp++;
+    e.total += gastoMonto(g);
+    if(g.pago) e.pagado += gastoMonto(g);
+    prov.set(key, e);
+  });
+  const wrapP = document.getElementById("tblCCProv");
+  const filasP = [...prov.values()].sort((a,b)=>(b.total-b.pagado)-(a.total-a.pagado));
+  if(!filasP.length){ wrapP.innerHTML = '<div class="empty">Sin gastos cargados todavía.</div>'; return; }
+  let tT=0,tP=0;
+  wrapP.innerHTML = `<table><thead><tr>
+      <th>Proveedor</th><th class="num">Comprob.</th><th class="num">Total</th><th class="num">Pagado</th><th class="num">Saldo a pagar</th>
+    </tr></thead><tbody>` +
+    filasP.map(e=>{
+      tT+=e.total; tP+=e.pagado;
+      return `<tr>
+        <td>${esc(e.nombre)}${e.cuit?`<div class="fine">${esc(e.cuit)}</div>`:""}</td>
+        <td class="num">${e.comp}</td>
+        <td class="num">${money(e.total)}</td>
+        <td class="num">${money(e.pagado)}</td>
+        <td class="num"><b>${money(e.total-e.pagado)}</b></td></tr>`;
+    }).join("") +
+    `</tbody><tfoot><tr><td colspan="2">Total</td><td class="num">${money(tT)}</td><td class="num">${money(tP)}</td><td class="num">${money(tT-tP)}</td></tr></tfoot></table>`;
+}
+
 /* ============ Excel: exportar / importar ============ */
 function exportExcel(){
   if(typeof XLSX==="undefined"){ toast("No se pudo cargar el módulo de Excel. Volvé a abrir la página."); return; }
   const wb = XLSX.utils.book_new();
   const gS = XLSX.utils.json_to_sheet(state.gastos.map(r=>{
     const c = r.pago && r.pago.echeqId ? state.echeqs.find(x=>x.id===r.pago.echeqId) : null;
+    const c3 = r.pago && r.pago.chequeId ? state.cheques.find(x=>x.id===r.pago.chequeId) : null;
     return {
-    "Fecha": r.fecha, "Detalle": r.detalle,
+    "Fecha": r.fecha, "Detalle": r.detalle, "CUIT": r.cuit||"",
     "Comprobante": r.tipoComp==="NC" ? "NOTA CREDITO" : r.tipoComp==="ND" ? "NOTA DEBITO" : "FACTURA",
     "Categoría": r.categoria,
     "Nº Factura": r.factura||"", "Alícuota": Number(r.alic)||0,
     "Neto": +gastoNeto(r).toFixed(2), "IVA": +gastoIva(r).toFixed(2), "Total": +gastoMonto(r).toFixed(2),
     "Pago": r.pago ? r.pago.medio : "", "Fecha Pago": r.pago ? (r.pago.fecha||"") : "",
-    "Nº E-Cheq": c ? c.num : "" };
+    "Nº E-Cheq": c ? c.num : "", "Nº Cheque 3ro": c3 ? c3.num : "" };
   }));
   const vS = XLSX.utils.json_to_sheet(state.viajes.map(r=>({
     "Fecha": r.fecha, "Cliente": r.cliente, "CUIT": r.cuit||"",
@@ -1244,7 +1603,10 @@ function exportExcel(){
     "Precio x Km": r.precio, "Arranque": r.gastos||0, "Peajes": r.peajes||0, "Seguro": r.seguro||0,
     "Neto": +viajeNeto(r).toFixed(2), "IVA 21%": +viajeIva(r).toFixed(2), "Total c/IVA": +viajeTotalCIva(r).toFixed(2),
     "Comisión Chofer 16%": +viajePagoChofer(r).toFixed(2),
-    "Facturado": r.facturado?"SI":"NO", "Nº Factura": r.factura||"" })));
+    "Facturado": r.facturado?"SI":"NO", "Nº Factura": r.factura||"",
+    "Cobrado": r.cobro ? r.cobro.medio : "", "Fecha Cobro": r.cobro ? (r.cobro.fecha||"") : "",
+    "Monto Cobrado": r.cobro ? (Number(r.cobro.monto)||0) : "",
+    "Cheque Nº": (()=>{ const c = r.cobro && r.cobro.chequeId ? state.cheques.find(x=>x.id===r.cobro.chequeId) : null; return c ? c.num : ""; })() })));
   const rS = XLSX.utils.json_to_sheet(state.rendiciones.map(r=>({
     "Fecha": r.fecha, "Tipo": r.tipo, "Detalle": r.detalle||"", "Monto": r.monto })));
   const cS = XLSX.utils.json_to_sheet(state.echeqs.map(c=>({
@@ -1256,6 +1618,10 @@ function exportExcel(){
     "Detalle": m.detalle||"", "Monto": m.monto })));
   const tS = XLSX.utils.json_to_sheet(state.terceros.map(t=>({
     "CUIT": t.cuit, "Nombre": t.nombre||"" })));
+  const qS = XLSX.utils.json_to_sheet(state.cheques.map(c=>({
+    "Nº": c.num, "Origen": c.origen||"", "Recibido": c.emision||"", "Fecha Cobro": c.fechaPago||"",
+    "Monto": Number(c.monto)||0,
+    "Estado": c.estado==="APLICADO" ? "APLICADO" : c.estado==="DEPOSITADO" ? "DEPOSITADO" : "EN CARTERA" })));
   const pS = XLSX.utils.json_to_sheet(pagoChoferPorMes().map(([m,e])=>({
     "Mes": m, "Viajes": e.viajes, "Km": +e.km.toFixed(1),
     "Base (km x precio)": +e.base.toFixed(2), "Pago Chofer 16%": +(e.base*PCT_CHOFER).toFixed(2) })));
@@ -1277,6 +1643,7 @@ function exportExcel(){
     {"Concepto":"Entregado al chofer", "Monto": +entH.toFixed(2)},
     {"Concepto":"Rendido por el chofer", "Monto": +renH.toFixed(2)},
     {"Concepto":"Saldo en poder del chofer", "Monto": +(entH-renH).toFixed(2)},
+    {"Concepto":"Cheques en cartera", "Monto": +state.cheques.filter(c=>c.estado==="CARTERA").reduce((s,c)=>s+(Number(c.monto)||0),0).toFixed(2)},
     {"Concepto":"Saldo banco", "Monto": +sal.banco.toFixed(2)},
     {"Concepto":"E-cheqs por debitar", "Monto": +echeqPend.toFixed(2)},
     {"Concepto":"Saldo banco proyectado", "Monto": +(sal.banco-echeqPend).toFixed(2)},
@@ -1287,6 +1654,7 @@ function exportExcel(){
   XLSX.utils.book_append_sheet(wb, rS, "Rendiciones");
   XLSX.utils.book_append_sheet(wb, cS, "E-Cheqs");
   XLSX.utils.book_append_sheet(wb, bS, "Banco");
+  XLSX.utils.book_append_sheet(wb, qS, "Cheques Cartera");
   XLSX.utils.book_append_sheet(wb, tS, "Terceros");
   XLSX.utils.book_append_sheet(wb, pS, "Pago Chofer");
   XLSX.utils.book_append_sheet(wb, resumen, "Resumen");
@@ -1320,7 +1688,17 @@ document.getElementById("fileImport").addEventListener("change", function(){
     try{
       const wb = XLSX.read(new Uint8Array(e.target.result), {type:"array", cellDates:true});
       const sheet = n => wb.Sheets[n] ? XLSX.utils.sheet_to_json(wb.Sheets[n], {defval:""}) : [];
-      const nuevo = { gastos:[], viajes:[], rendiciones:[], echeqs:[], banco:[], terceros:[] };
+      const nuevo = { gastos:[], viajes:[], rendiciones:[], echeqs:[], banco:[], terceros:[], cheques:[] };
+      sheet("Cheques Cartera").forEach(r=>{
+        const num = String(r["Nº"]||r["N°"]||r["Numero"]||"").trim();
+        if(!num && !r["Monto"]) return;
+        const est = String(r["Estado"]||"").trim().toUpperCase();
+        nuevo.cheques.push({ id: newId(), num, origen: String(r["Origen"]||""),
+          emision: normFecha(r["Recibido"]||r["Emisión"]), fechaPago: normFecha(r["Fecha Cobro"]),
+          monto: Number(r["Monto"])||0,
+          estado: est.startsWith("APLIC") ? "APLICADO" : est.startsWith("DEPO") ? "DEPOSITADO" : "CARTERA",
+          gastoId: null, viajeId: null });
+      });
       sheet("Terceros").forEach(r=>{
         const cu = normCuit(r["CUIT"]||r["Cuit"]);
         if(cu) nuevo.terceros.push({ cuit: cu, nombre: String(r["Nombre"]||r["Razón Social"]||"") });
@@ -1331,16 +1709,18 @@ document.getElementById("fileImport").addEventListener("change", function(){
         const medio = String(r["Pago"]||"").trim().toUpperCase();
         const comp = String(r["Comprobante"]||"").trim().toUpperCase();
         const g = { id: newId(), fecha: normFecha(r["Fecha"]),
-          detalle: String(r["Detalle"]||""), categoria: String(r["Categoría"]||r["Categoria"]||"Otros"),
+          detalle: String(r["Detalle"]||""), cuit: normCuit(r["CUIT"]),
+          categoria: String(r["Categoría"]||r["Categoria"]||"Otros"),
           tipoComp: comp.startsWith("NOTA CRED")||comp==="NC" ? "NC" : comp.startsWith("NOTA DEB")||comp==="ND" ? "ND" : "FAC",
           factura: String(r["Nº Factura"]||r["N° Factura"]||r["Factura"]||""),
           alic: isNaN(alic)?21:alic,
           monto: Math.abs(Number(r["Total"]!==""&&r["Total"]!=null ? r["Total"] : r["Monto"])||0),
           pago: null };
         if(medio==="NC"){ g.pago = { medio:"NC", fecha: normFecha(r["Fecha Pago"])||g.fecha }; }
-        if(medio==="EFECTIVO"||medio==="TRANSFERENCIA"||medio==="ECHEQ"){
+        if(medio==="EFECTIVO"||medio==="TRANSFERENCIA"||medio==="ECHEQ"||medio==="CHEQUE3"){
           g.pago = { medio, fecha: normFecha(r["Fecha Pago"])||g.fecha };
           if(medio==="ECHEQ") g.pago._echeqNum = String(r["Nº E-Cheq"]||r["N° E-Cheq"]||"").trim();
+          if(medio==="CHEQUE3") g.pago._cheq3Num = String(r["Nº Cheque 3ro"]||"").trim();
         }
         nuevo.gastos.push(g);
       });
@@ -1359,6 +1739,19 @@ document.getElementById("fileImport").addEventListener("change", function(){
           const c = nuevo.echeqs.find(x=>x.num===g.pago._echeqNum && x.gastoId==null);
           if(c){ c.gastoId = g.id; g.pago.echeqId = c.id; }
           delete g.pago._echeqNum;
+        }
+        if(g.pago && g.pago.medio==="CHEQUE3"){
+          const c = nuevo.cheques.find(x=>x.num===g.pago._cheq3Num && x.estado==="APLICADO" && x.gastoId==null);
+          if(c){ c.gastoId = g.id; g.pago.chequeId = c.id; }
+          delete g.pago._cheq3Num;
+        }
+      });
+      /* vincular cheques de cobros con viajes por número */
+      nuevo.viajes.forEach(v=>{
+        if(v.cobro && v.cobro.medio==="CHEQUE"){
+          const c = nuevo.cheques.find(x=>x.num===v.cobro._chequeNum && x.viajeId==null);
+          if(c){ c.viajeId = v.id; v.cobro.chequeId = c.id; }
+          delete v.cobro._chequeNum;
         }
       });
       sheet("Banco").forEach(r=>{
@@ -1383,7 +1776,14 @@ document.getElementById("fileImport").addEventListener("change", function(){
           gastos: Number(r["Arranque"]!==""&&r["Arranque"]!=null ? r["Arranque"] : r["Gastos"])||0,
           peajes: Number(r["Peajes"])||0, seguro: Number(r["Seguro"])||0,
           facturado: estado==="FACT",
-          factura: String(r["Nº Factura"]||r["N° Factura"]||"") });
+          factura: String(r["Nº Factura"]||r["N° Factura"]||""),
+          cobro: (()=>{
+            const mc = String(r["Cobrado"]||"").trim().toUpperCase();
+            if(mc!=="EFECTIVO" && mc!=="TRANSFERENCIA" && mc!=="CHEQUE") return null;
+            const cb = { medio: mc, fecha: normFecha(r["Fecha Cobro"]), monto: Number(r["Monto Cobrado"])||0 };
+            if(mc==="CHEQUE") cb._chequeNum = String(r["Cheque Nº"]||"").trim();
+            return cb;
+          })() });
       });
       sheet("Rendiciones").forEach(r=>{
         if(!r["Fecha"] && !r["Monto"]) return;
@@ -1394,11 +1794,12 @@ document.getElementById("fileImport").addEventListener("change", function(){
       });
       toast("Importando a la base compartida…");
       const wipe = async t => { const {error} = await sb.from(t).delete().not("id","is",null); if(error) throw error; };
-      await wipe("echeqs"); await wipe("gastos"); await wipe("viajes"); await wipe("rendiciones"); await wipe("banco");
+      await wipe("echeqs"); await wipe("cheques"); await wipe("gastos"); await wipe("viajes"); await wipe("rendiciones"); await wipe("banco");
       const insertar = async (t, rows) => { if(rows.length){ const {error} = await sb.from(t).insert(rows.map(MAP[t].to)); if(error) throw error; } };
       await insertar("gastos", nuevo.gastos); await insertar("viajes", nuevo.viajes);
       await insertar("rendiciones", nuevo.rendiciones); await insertar("banco", nuevo.banco);
       await insertar("echeqs", nuevo.echeqs);
+      await insertar("cheques", nuevo.cheques);
       if(nuevo.terceros.length){
         const {error: eT} = await sb.from("terceros").delete().not("cuit","is",null);
         if(eT) throw eT;
@@ -1419,7 +1820,7 @@ function renderAll(){
   document.getElementById("cntGastos").textContent = state.gastos.length;
   document.getElementById("cntViajes").textContent = state.viajes.length;
   document.getElementById("cntRend").textContent = state.rendiciones.length;
-  renderGastos(); renderViajes(); renderRend(); renderBanco();
+  renderGastos(); renderViajes(); renderRend(); renderBanco(); renderCheques(); renderCtaCte();
 }
 
 /* ============ Login (Supabase Auth) ============ */
@@ -1505,7 +1906,7 @@ async function arrancar(){
   suscribirRealtime();
 }
 (async function iniciar(){
-  ["gFecha","vFecha","rFecha","bFecha"].forEach(id=>document.getElementById(id).value = hoyISO());
+  ["gFecha","vFecha","rFecha","bFecha","chEmision"].forEach(id=>document.getElementById(id).value = hoyISO());
   renderAll();
   try{
     const { data: { session } } = await sb.auth.getSession();
