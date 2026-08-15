@@ -296,26 +296,20 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       </form>
     </div>
     <div class="card" id="cobroPanel" style="display:none; border-color:var(--accent);">
-      <h2>💰 Cobrar viaje: <span id="cobroInfo" style="font-weight:500;"></span></h2>
-      <form id="formCobro">
-        <div class="grid">
-          <label class="f">Medio de cobro
-            <select id="cbMedio">
-              <option value="EFECTIVO">Efectivo (entra a caja)</option>
-              <option value="TRANSFERENCIA">Transferencia (entra al banco)</option>
-              <option value="CHEQUE">Cheque de tercero (va a la cartera)</option>
-            </select>
-          </label>
-          <label class="f">Fecha<input type="date" id="cbFecha" required></label>
-          <label class="f">Monto cobrado ($)<input type="number" id="cbMonto" min="0" step="0.01" required></label>
-          <label class="f" id="cbNumWrap" style="display:none">Nº cheque<input type="text" id="cbNum"></label>
-          <label class="f" id="cbFPagoWrap" style="display:none">Fecha de cobro del cheque<input type="date" id="cbFPago"></label>
-        </div>
-        <div class="form-actions">
-          <button class="btn primary" type="submit">Confirmar cobro</button>
-          <span class="cancel-link" id="cbCancel" style="display:inline">Cancelar</span>
-        </div>
-      </form>
+      <h2>🧾 Recibo de cobranza — <span id="cobroInfo" style="font-weight:500;"></span></h2>
+      <div class="fine" style="margin-bottom:6px;">Facturas / viajes a cobrar de este cliente:</div>
+      <div id="rcViajes" style="margin-bottom:12px;"></div>
+      <div class="fine" style="margin-bottom:6px;">Formas de cobro (podés combinar varias):</div>
+      <div id="rcMedios"></div>
+      <div class="form-actions" style="margin-top:6px;">
+        <button class="btn small" type="button" id="rcAddMedio">+ Agregar forma de cobro</button>
+        <span class="calc-preview" id="rcResumen"></span>
+      </div>
+      <div class="form-actions" style="margin-top:10px;">
+        <label class="f" style="max-width:170px;">Fecha del recibo<input type="date" id="rcFecha"></label>
+        <button class="btn primary" type="button" id="rcConfirmar" style="align-self:flex-end;">Confirmar recibo</button>
+        <span class="cancel-link" id="cbCancel" style="display:inline; align-self:center;">Cancelar</span>
+      </div>
     </div>
     <div class="filters">
       <select id="vMes"></select>
@@ -456,6 +450,15 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 
   <!-- ================= CUENTAS CORRIENTES ================= -->
   <section class="tab" id="tab-ctacte">
+    <div class="kpis">
+      <div class="kpi"><div class="lbl">A cobrar (clientes)</div><div class="val" id="kCCACobrar">$ 0</div></div>
+      <div class="kpi"><div class="lbl">A pagar (proveedores)</div><div class="val" id="kCCAPagar">$ 0</div></div>
+      <div class="kpi"><div class="lbl">Retenciones percibidas</div><div class="val" id="kCCRet">$ 0</div><div class="sub">acumulado histórico</div></div>
+    </div>
+    <div class="card">
+      <h2>Recibos de cobranza emitidos</h2>
+      <div class="tblwrap" style="border:none; margin-bottom:0;" id="tblRecibos"></div>
+    </div>
     <div class="card">
       <h2>Cuenta corriente de clientes — facturado vs. cobrado</h2>
       <div class="tblwrap" style="border:none; margin-bottom:0;" id="tblCCClientes"></div>
@@ -481,7 +484,7 @@ const SB_KEY = "sb_publishable_U17zHkiQ-roiQz5TMXQswA_Z3Dll8g_";
 const sb = supabase.createClient(SB_URL, SB_KEY);
 const AUTH_DOMAIN = "@fletes.app";
 
-let state = { gastos: [], viajes: [], rendiciones: [], echeqs: [], banco: [], terceros: [], cheques: [] };
+let state = { gastos: [], viajes: [], rendiciones: [], echeqs: [], banco: [], terceros: [], cheques: [], recibos: [] };
 
 /* Mapeo app <-> base */
 const MAP = {
@@ -512,6 +515,10 @@ const MAP = {
   cheques: {
     to: r => ({ id:r.id, num:r.num||"", origen:r.origen||"", emision:r.emision||null, fecha_pago:r.fechaPago||null, monto:Number(r.monto)||0, estado:r.estado||"CARTERA", gasto_id:r.gastoId||null, viaje_id:r.viajeId||null }),
     from: d => ({ id:d.id, num:d.num||"", origen:d.origen||"", emision:d.emision||"", fechaPago:d.fecha_pago||"", monto:Number(d.monto)||0, estado:d.estado||"CARTERA", gastoId:d.gasto_id||null, viajeId:d.viaje_id||null })
+  },
+  recibos: {
+    to: r => ({ id:r.id, numero:Number(r.numero)||0, fecha:r.fecha||null, cliente:r.cliente||"", cuit:r.cuit||"", viajes:r.viajes||[], medios:r.medios||[], total:Number(r.total)||0 }),
+    from: d => ({ id:d.id, numero:Number(d.numero)||0, fecha:d.fecha||"", cliente:d.cliente||"", cuit:d.cuit||"", viajes:d.viajes||[], medios:d.medios||[], total:Number(d.total)||0 })
   }
 };
 function normCuit(s){ return String(s==null?"":s).replace(/\D/g,""); }
@@ -528,7 +535,7 @@ async function fetchTodo(t){
   return { data: filas };
 }
 async function loadAll(){
-  const tablas = ["gastos","viajes","rendiciones","echeqs","banco","terceros","cheques"];
+  const tablas = ["gastos","viajes","rendiciones","echeqs","banco","terceros","cheques","recibos"];
   const res = await Promise.all(tablas.map(t => fetchTodo(t)));
   for(let i=0;i<tablas.length;i++){
     if(res[i].error){ dbError(res[i].error); return false; }
@@ -1008,72 +1015,145 @@ function editViajeRow(id){
   previewViaje();
   document.getElementById("tab-viajes").scrollIntoView({behavior:"smooth"});
 }
-/* ---- Cobro de viajes ---- */
-let cobrandoViaje = null;
+/* ---- Recibo de cobranza (cobro de una o varias facturas, con varios medios) ---- */
+let rcMedios = [];
+function clienteKey(v){ return v.cuit || (v.cliente||"").trim().toUpperCase(); }
+const MEDIOS_RC = [
+  { val:"TRANSFERENCIA", lbl:"Transferencia (entra al banco)" },
+  { val:"EFECTIVO", lbl:"Efectivo (entra a caja)" },
+  { val:"CHEQUE", lbl:"Cheque de tercero (va a la cartera)" },
+  { val:"RETENCION", lbl:"Retenciones percibidas" }
+];
 function cobrarViaje(id){
   const v = state.viajes.find(x=>x.id===id); if(!v || v.cobro) return;
-  cobrandoViaje = id;
-  document.getElementById("cobroInfo").textContent = v.cliente + " — " + money(viajeTotalCIva(v)) + " c/IVA";
-  document.getElementById("cbFecha").value = hoyISO();
-  document.getElementById("cbMonto").value = +viajeTotalCIva(v).toFixed(2);
-  document.getElementById("cbMedio").value = "TRANSFERENCIA";
-  document.getElementById("cbNum").value = "";
-  document.getElementById("cbFPago").value = "";
-  toggleCobroFields();
+  const key = clienteKey(v);
+  const candidatos = ordenaFecha(state.viajes.filter(x=>!x.cobro && x.estado!=="PROPIO" && clienteKey(x)===key));
+  document.getElementById("cobroInfo").textContent = v.cliente;
+  document.getElementById("rcViajes").innerHTML = candidatos.map(x=>`
+    <label style="display:flex; gap:8px; align-items:center; font-size:14px; padding:3px 0; cursor:pointer;">
+      <input type="checkbox" class="rc-viaje" value="${x.id}" ${x.id===id?"checked":""} onchange="rcResumenUpd()">
+      <span>${fmtFecha(x.fecha)} · ${esc(x.ruta)||"viaje"} ${x.factura?"· Fact. "+esc(x.factura):""} — <b>${money(viajeTotalCIva(x))}</b>${x.estado==="PEND"?' <span class="fine">(sin facturar)</span>':""}</span>
+    </label>`).join("");
+  rcMedios = [ { medio:"TRANSFERENCIA", monto:+viajeTotalCIva(v).toFixed(2), detalle:"", fpago:"" } ];
+  document.getElementById("rcFecha").value = hoyISO();
+  rcMediosRender(); rcResumenUpd();
   document.getElementById("cobroPanel").style.display = "block";
   document.getElementById("cobroPanel").scrollIntoView({behavior:"smooth", block:"center"});
 }
-function toggleCobroFields(){
-  const esCheque = document.getElementById("cbMedio").value === "CHEQUE";
-  document.getElementById("cbNumWrap").style.display = esCheque ? "flex" : "none";
-  document.getElementById("cbFPagoWrap").style.display = esCheque ? "flex" : "none";
-  document.getElementById("cbNum").required = esCheque;
+function rcMediosRender(){
+  const cont = document.getElementById("rcMedios");
+  cont.innerHTML = rcMedios.map((m,i)=>`
+    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:6px;">
+      <select onchange="rcSet(${i},'medio',this.value)" style="border:1px solid var(--line); border-radius:7px; padding:7px 8px; font-size:14px;">
+        ${MEDIOS_RC.map(o=>`<option value="${o.val}" ${m.medio===o.val?"selected":""}>${o.lbl}</option>`).join("")}
+      </select>
+      <input type="number" min="0" step="0.01" value="${m.monto||""}" placeholder="Monto $" onchange="rcSet(${i},'monto',this.value)" oninput="rcSet(${i},'monto',this.value)"
+        style="border:1px solid var(--line); border-radius:7px; padding:7px 8px; font-size:14px; width:130px;">
+      ${m.medio==="CHEQUE" || m.medio==="RETENCION" ? `
+      <input type="text" value="${esc(m.detalle)}" placeholder="${m.medio==="CHEQUE"?"Nº cheque":"Nº certificado / detalle"}" onchange="rcSet(${i},'detalle',this.value)" oninput="rcSet(${i},'detalle',this.value)"
+        style="border:1px solid var(--line); border-radius:7px; padding:7px 8px; font-size:14px; width:170px;">` : ""}
+      ${m.medio==="CHEQUE" ? `
+      <input type="date" value="${m.fpago||""}" title="Fecha de cobro del cheque" onchange="rcSet(${i},'fpago',this.value)"
+        style="border:1px solid var(--line); border-radius:7px; padding:6px 8px; font-size:14px;">` : ""}
+      ${rcMedios.length>1 ? `<button class="btn small" type="button" onclick="rcQuitar(${i})">✕</button>` : ""}
+    </div>`).join("");
 }
-document.getElementById("cbMedio").addEventListener("change", toggleCobroFields);
-function cerrarCobroPanel(){
-  cobrandoViaje = null;
-  document.getElementById("cobroPanel").style.display = "none";
+function rcSet(i, campo, valor){
+  if(!rcMedios[i]) return;
+  rcMedios[i][campo] = campo==="monto" ? Number(valor)||0 : valor;
+  if(campo==="medio") rcMediosRender();
+  rcResumenUpd();
 }
+function rcQuitar(i){ rcMedios.splice(i,1); rcMediosRender(); rcResumenUpd(); }
+document.getElementById("rcAddMedio").addEventListener("click", ()=>{
+  const dif = rcTotFacturas() - rcTotMedios();
+  rcMedios.push({ medio:"CHEQUE", monto: dif>0 ? +dif.toFixed(2) : 0, detalle:"", fpago:"" });
+  rcMediosRender(); rcResumenUpd();
+});
+function rcTotFacturas(){
+  return [...document.querySelectorAll(".rc-viaje:checked")].reduce((s,ch)=>{
+    const v = state.viajes.find(x=>x.id===ch.value);
+    return s + (v ? viajeTotalCIva(v) : 0);
+  },0);
+}
+function rcTotMedios(){ return rcMedios.reduce((s,m)=>s+(Number(m.monto)||0),0); }
+function rcResumenUpd(){
+  const tf = rcTotFacturas(), tm = rcTotMedios(), dif = tf-tm;
+  document.getElementById("rcResumen").innerHTML =
+    `Facturas: <b>${money(tf)}</b> · Cobro: <b>${money(tm)}</b> · ` +
+    (Math.abs(dif)<0.01 ? `<span style="color:var(--green); font-weight:700;">✓ cierra</span>` : `<span style="color:var(--red); font-weight:700;">dif. ${money(dif)}</span>`);
+}
+function cerrarCobroPanel(){ document.getElementById("cobroPanel").style.display = "none"; }
 document.getElementById("cbCancel").addEventListener("click", cerrarCobroPanel);
-document.getElementById("formCobro").addEventListener("submit", e=>{
-  e.preventDefault();
-  const v = state.viajes.find(x=>x.id===cobrandoViaje);
-  if(!v){ cerrarCobroPanel(); return; }
-  const medio = document.getElementById("cbMedio").value;
-  const fecha = document.getElementById("cbFecha").value;
-  const monto = Number(document.getElementById("cbMonto").value)||0;
-  const cobro = { medio, fecha, monto };
-  if(medio==="CHEQUE"){
-    const num = document.getElementById("cbNum").value.trim();
-    if(!num){ toast("Cargá el número del cheque"); return; }
-    const c = { id: newId(), num, origen: v.cliente,
-      emision: fecha, fechaPago: document.getElementById("cbFPago").value || fecha,
-      monto, estado: "CARTERA", gastoId: null, viajeId: v.id };
-    state.cheques.push(c);
-    dbUpsert("cheques", c);
-    cobro.chequeId = c.id;
+document.getElementById("rcConfirmar").addEventListener("click", ()=>{
+  const sel = [...document.querySelectorAll(".rc-viaje:checked")].map(ch=>ch.value);
+  if(!sel.length){ toast("Elegí al menos una factura/viaje"); return; }
+  const medios = rcMedios.filter(m=>(Number(m.monto)||0)>0);
+  if(!medios.length){ toast("Cargá al menos una forma de cobro con monto"); return; }
+  for(const m of medios){
+    if(m.medio==="CHEQUE" && !String(m.detalle||"").trim()){ toast("Falta el número de un cheque"); return; }
   }
-  v.cobro = cobro;
-  cerrarCobroPanel(); dbUpsert("viajes", v); renderAll();
-  toast(medio==="CHEQUE" ? "Cobrado con cheque — entró a la cartera ✓"
-    : medio==="TRANSFERENCIA" ? "Cobrado ✓ — ingresó al banco"
-    : "Cobrado ✓ — ingresó a caja");
+  const dif = rcTotFacturas() - medios.reduce((s,m)=>s+m.monto,0);
+  if(Math.abs(dif)>=0.01 && !confirm("El cobro no coincide con las facturas (diferencia "+money(dif)+"). ¿Registrar igual?")) return;
+  const v0 = state.viajes.find(x=>x.id===sel[0]);
+  const fecha = document.getElementById("rcFecha").value || hoyISO();
+  const numero = state.recibos.reduce((mx,r)=>Math.max(mx, Number(r.numero)||0), 0) + 1;
+  const recibo = { id: newId(), numero, fecha, cliente: v0.cliente, cuit: v0.cuit||"", viajes: sel, medios: [], total: 0 };
+  medios.forEach(m=>{
+    const linea = { medio: m.medio, monto: +Number(m.monto).toFixed(2), detalle: String(m.detalle||"").trim() };
+    if(m.medio==="CHEQUE"){
+      const c = { id: newId(), num: linea.detalle, origen: v0.cliente,
+        emision: fecha, fechaPago: m.fpago || fecha, monto: linea.monto,
+        estado: "CARTERA", gastoId: null, viajeId: null };
+      state.cheques.push(c);
+      dbUpsert("cheques", c);
+      linea.chequeId = c.id;
+    }
+    recibo.medios.push(linea);
+    recibo.total += linea.monto;
+  });
+  recibo.total = +recibo.total.toFixed(2);
+  state.recibos.push(recibo);
+  dbUpsert("recibos", recibo);
+  sel.forEach(idv=>{
+    const v = state.viajes.find(x=>x.id===idv);
+    if(v){ v.cobro = { reciboId: recibo.id, fecha }; dbUpsert("viajes", v); }
+  });
+  cerrarCobroPanel(); renderAll();
+  toast("Recibo Nº "+numero+" registrado ✓ ("+sel.length+(sel.length===1?" factura":" facturas")+")");
 });
 function undoCobro(id){
   const v = state.viajes.find(x=>x.id===id); if(!v || !v.cobro) return;
+  if(v.cobro.reciboId){ undoRecibo(v.cobro.reciboId); return; }
+  /* cobros viejos (antes de los recibos) */
   if(v.cobro.chequeId){
     const c = state.cheques.find(x=>x.id===v.cobro.chequeId);
-    if(c && c.estado!=="CARTERA"){
-      toast("El cheque de este cobro ya fue " + (c.estado==="APLICADO" ? "aplicado a un pago" : "depositado") + ". Deshacé eso primero.");
-      return;
-    }
+    if(c && c.estado!=="CARTERA"){ toast("El cheque de este cobro ya fue "+(c.estado==="APLICADO"?"aplicado a un pago":"depositado")+". Deshacé eso primero."); return; }
     if(!confirm("¿Deshacer el cobro? Se saca el cheque Nº "+(c?c.num:"")+" de la cartera.")) return;
     if(c){ state.cheques.splice(state.cheques.indexOf(c),1); dbDelete("cheques", c.id); }
-  }else{
-    if(!confirm("¿Deshacer el cobro de \""+v.cliente+"\"?")) return;
-  }
+  }else if(!confirm("¿Deshacer el cobro de \""+v.cliente+"\"?")) return;
   v.cobro = null;
   dbUpsert("viajes", v); renderAll(); toast("Cobro deshecho");
+}
+function undoRecibo(rid){
+  const r = state.recibos.find(x=>x.id===rid); if(!r) return;
+  const cheqIds = (r.medios||[]).filter(m=>m.chequeId).map(m=>m.chequeId);
+  for(const cid of cheqIds){
+    const c = state.cheques.find(x=>x.id===cid);
+    if(c && c.estado!=="CARTERA"){ toast("Un cheque de este recibo ya fue "+(c.estado==="APLICADO"?"aplicado a un pago":"depositado")+". Deshacé eso primero."); return; }
+  }
+  if(!confirm("¿Deshacer el recibo Nº "+r.numero+" de "+r.cliente+"? Se liberan sus "+(r.viajes||[]).length+" factura(s)"+(cheqIds.length?" y se sacan sus cheques de la cartera":"")+".")) return;
+  cheqIds.forEach(cid=>{
+    const c = state.cheques.find(x=>x.id===cid);
+    if(c){ state.cheques.splice(state.cheques.indexOf(c),1); dbDelete("cheques", cid); }
+  });
+  (r.viajes||[]).forEach(idv=>{
+    const v = state.viajes.find(x=>x.id===idv);
+    if(v && v.cobro && v.cobro.reciboId===rid){ v.cobro = null; dbUpsert("viajes", v); }
+  });
+  state.recibos.splice(state.recibos.indexOf(r),1);
+  dbDelete("recibos", rid);
+  renderAll(); toast("Recibo Nº "+r.numero+" deshecho");
 }
 
 function toggleFacturado(id){
@@ -1143,8 +1223,14 @@ function renderViajes(){
 }
 function cobroCell(r){
   if(r.cobro){
-    const m = r.cobro.medio;
-    const lbl = m==="EFECTIVO" ? "Efvo." : m==="TRANSFERENCIA" ? "Transf." : "Cheque";
+    let lbl;
+    if(r.cobro.reciboId){
+      const rc = state.recibos.find(x=>x.id===r.cobro.reciboId);
+      lbl = rc ? "RC Nº "+rc.numero : "Recibo";
+    }else{
+      const m = r.cobro.medio;
+      lbl = m==="EFECTIVO" ? "Efvo." : m==="TRANSFERENCIA" ? "Transf." : "Cheque";
+    }
     return `<div style="margin-top:3px"><span class="chip click fact" onclick="undoCobro('${r.id}')" title="Cobrado el ${fmtFecha(r.cobro.fecha)} — tocar para deshacer">$ Cobrado · ${lbl}</span></div>`;
   }
   if(r.estado==="PROPIO") return "";
@@ -1286,10 +1372,16 @@ function saldos(){
   });
   state.echeqs.forEach(c=>{ if(c.debitado) banco-=echeqMonto(c); });
   state.viajes.forEach(v=>{
-    if(!v.cobro) return;
+    if(!v.cobro || v.cobro.reciboId) return;   // los recibos se suman aparte
     const m = Number(v.cobro.monto)||0;
     if(v.cobro.medio==="TRANSFERENCIA") banco+=m;
     else if(v.cobro.medio==="EFECTIVO") ef+=m;
+  });
+  state.recibos.forEach(r=>{
+    (r.medios||[]).forEach(m=>{
+      if(m.medio==="TRANSFERENCIA") banco+=Number(m.monto)||0;
+      else if(m.medio==="EFECTIVO") ef+=Number(m.monto)||0;
+    });
   });
   state.cheques.forEach(c=>{ if(c.estado==="DEPOSITADO") banco+=Number(c.monto)||0; });
   return { banco, ef };
@@ -1309,11 +1401,19 @@ function movimientosBanco(){
       detalle:"Débito cheque propio Nº "+c.num+" — "+c.detalle, monto:echeqMonto(c), manual:false });
   });
   state.viajes.forEach(v=>{
-    if(!v.cobro) return;
+    if(!v.cobro || v.cobro.reciboId) return;
     if(v.cobro.medio==="TRANSFERENCIA" || v.cobro.medio==="EFECTIVO"){
       list.push({ fecha:v.cobro.fecha||v.fecha, cuenta:v.cobro.medio==="TRANSFERENCIA"?"BANCO":"EFECTIVO",
         tipo:"INGRESO", detalle:"Cobro viaje: "+v.cliente, monto:Number(v.cobro.monto)||0, manual:false });
     }
+  });
+  state.recibos.forEach(r=>{
+    (r.medios||[]).forEach(m=>{
+      if(m.medio==="TRANSFERENCIA" || m.medio==="EFECTIVO"){
+        list.push({ fecha:r.fecha, cuenta:m.medio==="TRANSFERENCIA"?"BANCO":"EFECTIVO",
+          tipo:"INGRESO", detalle:"Recibo Nº "+r.numero+" — "+r.cliente, monto:Number(m.monto)||0, manual:false });
+      }
+    });
   });
   state.cheques.forEach(c=>{
     if(c.estado==="DEPOSITADO") list.push({ fecha:c.fechaPago||c.emision, cuenta:"BANCO", tipo:"INGRESO",
@@ -1517,6 +1617,27 @@ function renderCheques(){
 
 /* ============ CUENTAS CORRIENTES ============ */
 function renderCtaCte(){
+  /* Recibos emitidos */
+  const wrapR = document.getElementById("tblRecibos");
+  const recs = [...state.recibos].sort((a,b)=>(Number(b.numero)||0)-(Number(a.numero)||0));
+  const medioLbl = m => m==="TRANSFERENCIA"?"Transf.":m==="EFECTIVO"?"Efvo.":m==="CHEQUE"?"Cheque":"Retención";
+  if(!recs.length){ wrapR.innerHTML = '<div class="empty">Sin recibos todavía. Se generan desde el botón Cobrar en Viajes.</div>'; }
+  else{
+    wrapR.innerHTML = `<table><thead><tr>
+        <th>Nº</th><th>Fecha</th><th>Cliente</th><th class="num">Facturas</th><th>Medios</th><th class="num">Total</th>
+      </tr></thead><tbody>` +
+      recs.map(r=>`<tr>
+        <td><b>${r.numero}</b></td>
+        <td>${fmtFecha(r.fecha)}</td>
+        <td>${esc(r.cliente)}</td>
+        <td class="num">${(r.viajes||[]).length}</td>
+        <td class="fine">${(r.medios||[]).map(m=>medioLbl(m.medio)+" "+money(m.monto)+(m.detalle?" ("+esc(m.detalle)+")":"")).join(" · ")}</td>
+        <td class="num"><b>${money(r.total)}</b></td></tr>`).join("") +
+      `</tbody></table>`;
+  }
+  const totRet = state.recibos.reduce((s,r)=>s+(r.medios||[]).filter(m=>m.medio==="RETENCION").reduce((t,m)=>t+(Number(m.monto)||0),0),0);
+  document.getElementById("kCCRet").textContent = money(totRet);
+
   /* Clientes */
   const cli = new Map();
   state.viajes.forEach(v=>{
@@ -1526,7 +1647,14 @@ function renderCtaCte(){
     const e = cli.get(key) || { nombre: v.cliente, cuit: v.cuit||"", viajes:0, fact:0, cobrado:0 };
     e.viajes++;
     if(v.estado==="FACT") e.fact += viajeTotalCIva(v);
-    if(v.cobro) e.cobrado += Number(v.cobro.monto)||0;
+    if(v.cobro && !v.cobro.reciboId) e.cobrado += Number(v.cobro.monto)||0;
+    cli.set(key, e);
+  });
+  state.recibos.forEach(r=>{
+    const key = r.cuit || (r.cliente||"").trim().toUpperCase();
+    if(!key) return;
+    const e = cli.get(key) || { nombre: r.cliente, cuit: r.cuit||"", viajes:0, fact:0, cobrado:0 };
+    e.cobrado += Number(r.total)||0;
     cli.set(key, e);
   });
   const wrapC = document.getElementById("tblCCClientes");
@@ -1548,7 +1676,9 @@ function renderCtaCte(){
           <td class="num"><b>${money(saldo)}</b></td></tr>`;
       }).join("") +
       `</tbody><tfoot><tr><td colspan="2">Total</td><td class="num">${money(tF)}</td><td class="num">${money(tC)}</td><td class="num">${money(tF-tC)}</td></tr></tfoot></table>`;
+    document.getElementById("kCCACobrar").textContent = money(tF-tC);
   }
+  if(!filasC.length) document.getElementById("kCCACobrar").textContent = money(0);
   /* Proveedores */
   const prov = new Map();
   state.gastos.forEach(g=>{
@@ -1563,7 +1693,7 @@ function renderCtaCte(){
   });
   const wrapP = document.getElementById("tblCCProv");
   const filasP = [...prov.values()].sort((a,b)=>(b.total-b.pagado)-(a.total-a.pagado));
-  if(!filasP.length){ wrapP.innerHTML = '<div class="empty">Sin gastos cargados todavía.</div>'; return; }
+  if(!filasP.length){ wrapP.innerHTML = '<div class="empty">Sin gastos cargados todavía.</div>'; document.getElementById("kCCAPagar").textContent = money(0); return; }
   let tT=0,tP=0;
   wrapP.innerHTML = `<table><thead><tr>
       <th>Proveedor</th><th class="num">Comprob.</th><th class="num">Total</th><th class="num">Pagado</th><th class="num">Saldo a pagar</th>
@@ -1578,6 +1708,7 @@ function renderCtaCte(){
         <td class="num"><b>${money(e.total-e.pagado)}</b></td></tr>`;
     }).join("") +
     `</tbody><tfoot><tr><td colspan="2">Total</td><td class="num">${money(tT)}</td><td class="num">${money(tP)}</td><td class="num">${money(tT-tP)}</td></tr></tfoot></table>`;
+  document.getElementById("kCCAPagar").textContent = money(tT-tP);
 }
 
 /* ============ Excel: exportar / importar ============ */
@@ -1604,9 +1735,16 @@ function exportExcel(){
     "Neto": +viajeNeto(r).toFixed(2), "IVA 21%": +viajeIva(r).toFixed(2), "Total c/IVA": +viajeTotalCIva(r).toFixed(2),
     "Comisión Chofer 16%": +viajePagoChofer(r).toFixed(2),
     "Facturado": r.facturado?"SI":"NO", "Nº Factura": r.factura||"",
-    "Cobrado": r.cobro ? r.cobro.medio : "", "Fecha Cobro": r.cobro ? (r.cobro.fecha||"") : "",
-    "Monto Cobrado": r.cobro ? (Number(r.cobro.monto)||0) : "",
+    "Cobrado": r.cobro ? (r.cobro.reciboId ? "RECIBO" : r.cobro.medio) : "",
+    "Fecha Cobro": r.cobro ? (r.cobro.fecha||"") : "",
+    "Monto Cobrado": r.cobro && !r.cobro.reciboId ? (Number(r.cobro.monto)||0) : "",
+    "Recibo Nº": (()=>{ const rc = r.cobro && r.cobro.reciboId ? state.recibos.find(x=>x.id===r.cobro.reciboId) : null; return rc ? rc.numero : ""; })(),
     "Cheque Nº": (()=>{ const c = r.cobro && r.cobro.chequeId ? state.cheques.find(x=>x.id===r.cobro.chequeId) : null; return c ? c.num : ""; })() })));
+  const rcS = XLSX.utils.json_to_sheet(state.recibos.flatMap(r=>
+    (r.medios||[]).map(m=>({
+      "Recibo Nº": r.numero, "Fecha": r.fecha, "Cliente": r.cliente, "CUIT": r.cuit||"",
+      "Medio": m.medio, "Monto": Number(m.monto)||0, "Detalle": m.detalle||"",
+      "Total Recibo": Number(r.total)||0 }))));
   const rS = XLSX.utils.json_to_sheet(state.rendiciones.map(r=>({
     "Fecha": r.fecha, "Tipo": r.tipo, "Detalle": r.detalle||"", "Monto": r.monto })));
   const cS = XLSX.utils.json_to_sheet(state.echeqs.map(c=>({
@@ -1644,6 +1782,7 @@ function exportExcel(){
     {"Concepto":"Rendido por el chofer", "Monto": +renH.toFixed(2)},
     {"Concepto":"Saldo en poder del chofer", "Monto": +(entH-renH).toFixed(2)},
     {"Concepto":"Cheques en cartera", "Monto": +state.cheques.filter(c=>c.estado==="CARTERA").reduce((s,c)=>s+(Number(c.monto)||0),0).toFixed(2)},
+    {"Concepto":"Retenciones percibidas (acum.)", "Monto": +state.recibos.reduce((s,r)=>s+(r.medios||[]).filter(m=>m.medio==="RETENCION").reduce((t,m)=>t+(Number(m.monto)||0),0),0).toFixed(2)},
     {"Concepto":"Saldo banco", "Monto": +sal.banco.toFixed(2)},
     {"Concepto":"E-cheqs por debitar", "Monto": +echeqPend.toFixed(2)},
     {"Concepto":"Saldo banco proyectado", "Monto": +(sal.banco-echeqPend).toFixed(2)},
@@ -1654,6 +1793,7 @@ function exportExcel(){
   XLSX.utils.book_append_sheet(wb, rS, "Rendiciones");
   XLSX.utils.book_append_sheet(wb, cS, "E-Cheqs");
   XLSX.utils.book_append_sheet(wb, bS, "Banco");
+  XLSX.utils.book_append_sheet(wb, rcS, "Recibos");
   XLSX.utils.book_append_sheet(wb, qS, "Cheques Cartera");
   XLSX.utils.book_append_sheet(wb, tS, "Terceros");
   XLSX.utils.book_append_sheet(wb, pS, "Pago Chofer");
@@ -1688,7 +1828,24 @@ document.getElementById("fileImport").addEventListener("change", function(){
     try{
       const wb = XLSX.read(new Uint8Array(e.target.result), {type:"array", cellDates:true});
       const sheet = n => wb.Sheets[n] ? XLSX.utils.sheet_to_json(wb.Sheets[n], {defval:""}) : [];
-      const nuevo = { gastos:[], viajes:[], rendiciones:[], echeqs:[], banco:[], terceros:[], cheques:[] };
+      const nuevo = { gastos:[], viajes:[], rendiciones:[], echeqs:[], banco:[], terceros:[], cheques:[], recibos:[] };
+      /* Recibos: una fila por medio, agrupadas por Nº */
+      const rcMap = new Map();
+      sheet("Recibos").forEach(r=>{
+        const num = Number(r["Recibo Nº"]||r["Recibo N°"])||0;
+        if(!num) return;
+        if(!rcMap.has(num)) rcMap.set(num, { id: newId(), numero: num, fecha: normFecha(r["Fecha"]),
+          cliente: String(r["Cliente"]||""), cuit: normCuit(r["CUIT"]), viajes: [], medios: [], total: 0 });
+        const rc = rcMap.get(num);
+        const medio = String(r["Medio"]||"").trim().toUpperCase();
+        const monto = Number(r["Monto"])||0;
+        if(medio && monto){
+          const linea = { medio, monto, detalle: String(r["Detalle"]||"") };
+          if(medio==="CHEQUE") linea._chequeNum = linea.detalle;
+          rc.medios.push(linea); rc.total += monto;
+        }
+      });
+      rcMap.forEach(rc=>{ rc.total = +rc.total.toFixed(2); nuevo.recibos.push(rc); });
       sheet("Cheques Cartera").forEach(r=>{
         const num = String(r["Nº"]||r["N°"]||r["Numero"]||"").trim();
         if(!num && !r["Monto"]) return;
@@ -1754,6 +1911,23 @@ document.getElementById("fileImport").addEventListener("change", function(){
           delete v.cobro._chequeNum;
         }
       });
+      /* vincular viajes y cheques con recibos por número */
+      nuevo.viajes.forEach(v=>{
+        if(v.cobro && v.cobro._reciboNum != null){
+          const rc = nuevo.recibos.find(x=>x.numero===v.cobro._reciboNum);
+          if(rc){ rc.viajes.push(v.id); v.cobro = { reciboId: rc.id, fecha: v.cobro.fecha || rc.fecha }; }
+          else v.cobro = null;
+        }
+      });
+      nuevo.recibos.forEach(rc=>{
+        rc.medios.forEach(m=>{
+          if(m._chequeNum != null){
+            const c = nuevo.cheques.find(x=>x.num===m._chequeNum && !x.gastoId && !x.viajeId);
+            if(c) m.chequeId = c.id;
+            delete m._chequeNum;
+          }
+        });
+      });
       sheet("Banco").forEach(r=>{
         if(!r["Fecha"] && !r["Monto"]) return;
         const cu = String(r["Cuenta"]||"").trim().toUpperCase();
@@ -1779,6 +1953,9 @@ document.getElementById("fileImport").addEventListener("change", function(){
           factura: String(r["Nº Factura"]||r["N° Factura"]||""),
           cobro: (()=>{
             const mc = String(r["Cobrado"]||"").trim().toUpperCase();
+            if(mc==="RECIBO"){
+              return { _reciboNum: Number(r["Recibo Nº"]||r["Recibo N°"])||0, fecha: normFecha(r["Fecha Cobro"]) };
+            }
             if(mc!=="EFECTIVO" && mc!=="TRANSFERENCIA" && mc!=="CHEQUE") return null;
             const cb = { medio: mc, fecha: normFecha(r["Fecha Cobro"]), monto: Number(r["Monto Cobrado"])||0 };
             if(mc==="CHEQUE") cb._chequeNum = String(r["Cheque Nº"]||"").trim();
@@ -1794,12 +1971,13 @@ document.getElementById("fileImport").addEventListener("change", function(){
       });
       toast("Importando a la base compartida…");
       const wipe = async t => { const {error} = await sb.from(t).delete().not("id","is",null); if(error) throw error; };
-      await wipe("echeqs"); await wipe("cheques"); await wipe("gastos"); await wipe("viajes"); await wipe("rendiciones"); await wipe("banco");
+      await wipe("echeqs"); await wipe("cheques"); await wipe("recibos"); await wipe("gastos"); await wipe("viajes"); await wipe("rendiciones"); await wipe("banco");
       const insertar = async (t, rows) => { if(rows.length){ const {error} = await sb.from(t).insert(rows.map(MAP[t].to)); if(error) throw error; } };
       await insertar("gastos", nuevo.gastos); await insertar("viajes", nuevo.viajes);
       await insertar("rendiciones", nuevo.rendiciones); await insertar("banco", nuevo.banco);
       await insertar("echeqs", nuevo.echeqs);
       await insertar("cheques", nuevo.cheques);
+      await insertar("recibos", nuevo.recibos);
       if(nuevo.terceros.length){
         const {error: eT} = await sb.from("terceros").delete().not("cuit","is",null);
         if(eT) throw eT;
