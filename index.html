@@ -235,27 +235,20 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       </form>
     </div>
     <div class="card" id="payPanel" style="display:none; border-color:var(--accent);">
-      <h2>💳 Pagar gasto: <span id="payInfo" style="font-weight:500;"></span></h2>
-      <form id="formPay">
-        <div class="grid">
-          <label class="f">Medio de pago
-            <select id="pMedio">
-              <option value="TRANSFERENCIA">Transferencia (sale del banco)</option>
-              <option value="EFECTIVO">Efectivo</option>
-              <option value="ECHEQ">Cheque propio / e-cheq (debita cuando entra al banco)</option>
-              <option value="CHEQUE3">Cheque de tercero (de la cartera)</option>
-            </select>
-          </label>
-          <label class="f">Fecha de pago<input type="date" id="pFecha" required></label>
-          <label class="f" id="pNumWrap" style="display:none">Nº cheque propio<input type="text" id="pNum" placeholder="Ej: 00123456"></label>
-          <label class="f" id="pFPagoWrap" style="display:none">Fecha de cobro del cheque<input type="date" id="pFPago"></label>
-          <label class="f" id="pCheqWrap" style="display:none">Cheque de la cartera<select id="pCheq"></select></label>
-        </div>
-        <div class="form-actions">
-          <button class="btn primary" type="submit">Confirmar pago</button>
-          <span class="cancel-link" id="pCancel" style="display:inline">Cancelar</span>
-        </div>
-      </form>
+      <h2>📋 Orden de pago — <span id="payInfo" style="font-weight:500;"></span></h2>
+      <div class="fine" style="margin-bottom:6px;">Comprobantes de este proveedor (las NC restan del total a pagar):</div>
+      <div id="opComps" style="margin-bottom:12px;"></div>
+      <div class="fine" style="margin-bottom:6px;">Formas de pago (podés combinar varias):</div>
+      <div id="opMedios"></div>
+      <div class="form-actions" style="margin-top:6px;">
+        <button class="btn small" type="button" id="opAddMedio">+ Agregar forma de pago</button>
+        <span class="calc-preview" id="opResumen"></span>
+      </div>
+      <div class="form-actions" style="margin-top:10px;">
+        <label class="f" style="max-width:170px;">Fecha de pago<input type="date" id="opFecha"></label>
+        <button class="btn primary" type="button" id="opConfirmar" style="align-self:flex-end;">Confirmar pago</button>
+        <span class="cancel-link" id="pCancel" style="display:inline; align-self:center;">Cancelar</span>
+      </div>
     </div>
     <div class="filters">
       <select id="gMes"></select>
@@ -461,6 +454,10 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       <div class="tblwrap" style="border:none; margin-bottom:0;" id="tblRecibos"></div>
     </div>
     <div class="card">
+      <h2>Órdenes de pago emitidas</h2>
+      <div class="tblwrap" style="border:none; margin-bottom:0;" id="tblOrdenes"></div>
+    </div>
+    <div class="card">
       <h2>Cuenta corriente de clientes — facturado vs. cobrado</h2>
       <div class="tblwrap" style="border:none; margin-bottom:0;" id="tblCCClientes"></div>
     </div>
@@ -485,7 +482,7 @@ const SB_KEY = "sb_publishable_U17zHkiQ-roiQz5TMXQswA_Z3Dll8g_";
 const sb = supabase.createClient(SB_URL, SB_KEY);
 const AUTH_DOMAIN = "@fletes.app";
 
-let state = { gastos: [], viajes: [], rendiciones: [], echeqs: [], banco: [], terceros: [], cheques: [], recibos: [] };
+let state = { gastos: [], viajes: [], rendiciones: [], echeqs: [], banco: [], terceros: [], cheques: [], recibos: [], ordenes: [] };
 
 /* Mapeo app <-> base */
 const MAP = {
@@ -520,6 +517,10 @@ const MAP = {
   recibos: {
     to: r => ({ id:r.id, numero:Number(r.numero)||0, fecha:r.fecha||null, cliente:r.cliente||"", cuit:r.cuit||"", viajes:r.viajes||[], medios:r.medios||[], total:Number(r.total)||0 }),
     from: d => ({ id:d.id, numero:Number(d.numero)||0, fecha:d.fecha||"", cliente:d.cliente||"", cuit:d.cuit||"", viajes:d.viajes||[], medios:d.medios||[], total:Number(d.total)||0 })
+  },
+  ordenes: {
+    to: r => ({ id:r.id, numero:Number(r.numero)||0, fecha:r.fecha||null, proveedor:r.proveedor||"", cuit:r.cuit||"", gastos:r.gastos||[], medios:r.medios||[], total:Number(r.total)||0 }),
+    from: d => ({ id:d.id, numero:Number(d.numero)||0, fecha:d.fecha||"", proveedor:d.proveedor||"", cuit:d.cuit||"", gastos:d.gastos||[], medios:d.medios||[], total:Number(d.total)||0 })
   }
 };
 function normCuit(s){ return String(s==null?"":s).replace(/\D/g,""); }
@@ -536,7 +537,7 @@ async function fetchTodo(t){
   return { data: filas };
 }
 async function loadAll(){
-  const tablas = ["gastos","viajes","rendiciones","echeqs","banco","terceros","cheques","recibos"];
+  const tablas = ["gastos","viajes","rendiciones","echeqs","banco","terceros","cheques","recibos","ordenes"];
   const res = await Promise.all(tablas.map(t => fetchTodo(t)));
   for(let i=0;i<tablas.length;i++){
     if(res[i].error){ dbError(res[i].error); return false; }
@@ -647,6 +648,10 @@ function deleteRow(kind, id){
   if(i>=0){
     if(kind==="gastos"){
       const g = list[i];
+      if(g.pago && g.pago.ops && g.pago.ops.length){
+        toast("Este comprobante está dentro de una orden de pago. Deshacé primero la OP (tocando el chip verde/rojo).");
+        return;
+      }
       if(g.pago && g.pago.echeqId){
         const j = state.echeqs.findIndex(c=>c.id===g.pago.echeqId);
         if(j>=0) state.echeqs.splice(j,1);
@@ -658,6 +663,10 @@ function deleteRow(kind, id){
     }
     if(kind==="viajes"){
       const v = list[i];
+      if(v.cobro && v.cobro.recibos && v.cobro.recibos.length){
+        toast("Este viaje está dentro de un recibo de cobranza. Deshacé primero el recibo (tocando el chip).");
+        return;
+      }
       if(v.cobro && v.cobro.chequeId){
         const c3 = state.cheques.find(x=>x.id===v.cobro.chequeId);
         if(c3 && c3.estado==="CARTERA"){
@@ -809,8 +818,20 @@ function compCell(r){
   return '<span class="fine">Fact.</span>';
 }
 function pagoCell(r){
+  /* comprobantes dentro de órdenes de pago */
+  if(r.pago && r.pago.ops && r.pago.ops.length){
+    const nums = r.pago.ops.map(e=>{ const o = state.ordenes.find(x=>x.id===e.opId); return o ? o.numero : "?"; });
+    const lblOp = "OP Nº " + nums.join(", ");
+    const undo = `onclick="(function(){ const g=state.gastos.find(x=>x.id==='${r.id}'); if(g&&g.pago&&g.pago.ops.length) undoOrden(g.pago.ops[g.pago.ops.length-1].opId); })()"`;
+    if(r.tipoComp==="NC") return `<span class="chip click fact" ${undo} title="Aplicada en ${lblOp} — tocar para deshacer la última OP">✓ Aplicada · ${lblOp}</span>`;
+    if(!pagoCompleto(r)){
+      return `<span class="chip click parcial" ${undo} title="Pagado ${money(pagoAsignado(r))} de ${money(r.monto)} (${lblOp}) — tocar para deshacer la última OP">⚠ Parcial · falta ${money(pagoRestante(r))}</span>
+        <div style="margin-top:3px"><button class="btn small" onclick="pagarGasto('${r.id}')">Pagar resto</button></div>`;
+    }
+    return `<span class="chip click fact" ${undo} title="Pagado el ${fmtFecha(r.pago.fecha)} — tocar para deshacer la última OP">✓ Pagado · ${lblOp}</span>`;
+  }
   if(r.tipoComp==="NC"){
-    if(!r.pago) return `<button class="btn small" onclick="aplicarNC('${r.id}')">Aplicar</button>`;
+    if(!r.pago) return `<button class="btn small" onclick="aplicarNC('${r.id}')">Aplicar</button> <button class="btn small" onclick="pagarGasto('${r.id}')" title="Incluirla en una orden de pago">En OP</button>`;
     return `<span class="chip click fact" onclick="undoPago('${r.id}')" title="Aplicada el ${fmtFecha(r.pago.fecha)} — tocar para deshacer">✓ Aplicada</span>`;
   }
   if(!r.pago) return `<button class="btn small" onclick="pagarGasto('${r.id}')">Pagar</button>`;
@@ -830,83 +851,220 @@ function pagoCell(r){
 document.getElementById("gMes").addEventListener("change", renderGastos);
 document.getElementById("gCatFiltro").addEventListener("change", renderGastos);
 
-/* ---- Pago de gastos ---- */
-let payingGasto = null;
+/* ---- Orden de pago (varios comprobantes + varios medios) ---- */
+let opMedios = [];
+function proveedorKey(g){ return g.cuit || (g.detalle||"").trim().toUpperCase(); }
+function pagoAsignado(g){
+  if(!g.pago) return 0;
+  if(g.pago.ops) return g.pago.ops.reduce((s,x)=>s+(Number(x.monto)||0),0);
+  return Number(g.monto)||0;   // pagos viejos: completos
+}
+function pagoCompleto(g){
+  if(!g.pago) return false;
+  if(g.pago.ops) return pagoAsignado(g) >= (Number(g.monto)||0) - 0.01;
+  return true;
+}
+function pagoRestante(g){ return Math.max(0, (Number(g.monto)||0) - pagoAsignado(g)); }
+function pagoAplicadoSigned(g){
+  if(!g.pago) return 0;
+  if(g.pago.ops) return (g.tipoComp==="NC" ? -1 : 1) * pagoAsignado(g);
+  return gastoMonto(g);
+}
 function aplicarNC(id){
   const g = state.gastos.find(x=>x.id===id); if(!g || g.pago) return;
   g.pago = { medio: "NC", fecha: hoyISO() };
   dbUpsert("gastos", g); renderAll();
   toast("Nota de crédito aplicada ✓ (no toca banco ni efectivo)");
 }
+const MEDIOS_OP = [
+  { val:"TRANSFERENCIA", lbl:"Transferencia (sale del banco)" },
+  { val:"EFECTIVO", lbl:"Efectivo (sale de caja)" },
+  { val:"ECHEQ", lbl:"Cheque propio / e-cheq" },
+  { val:"CHEQUE3", lbl:"Cheque de tercero (cartera)" }
+];
 function pagarGasto(id){
-  const g = state.gastos.find(x=>x.id===id); if(!g || g.pago || g.tipoComp==="NC") return;
-  payingGasto = id;
-  document.getElementById("payInfo").textContent = g.detalle + " — " + money(g.monto);
-  document.getElementById("pFecha").value = hoyISO();
-  document.getElementById("pNum").value = "";
-  document.getElementById("pFPago").value = "";
-  document.getElementById("pMedio").value = "TRANSFERENCIA";
-  toggleEcheqFields();
+  const g = state.gastos.find(x=>x.id===id); if(!g || pagoCompleto(g)) return;
+  const key = proveedorKey(g);
+  const t = g.cuit ? state.terceros.find(x=>normCuit(x.cuit)===normCuit(g.cuit)) : null;
+  document.getElementById("payInfo").textContent = t ? t.nombre : g.detalle;
+  const candidatos = ordenaFecha(state.gastos.filter(x=>!pagoCompleto(x) && proveedorKey(x)===key));
+  document.getElementById("opComps").innerHTML = candidatos.map(x=>{
+    const resta = pagoRestante(x), parcial = x.pago && resta < (Number(x.monto)||0);
+    const tipo = x.tipoComp==="NC" ? '<span class="chip nc">NC</span> ' : x.tipoComp==="ND" ? '<span class="chip nd">ND</span> ' : "";
+    return `
+    <label style="display:flex; gap:8px; align-items:center; font-size:14px; padding:3px 0; cursor:pointer;">
+      <input type="checkbox" class="op-comp" value="${x.id}" ${x.id===id?"checked":""} onchange="opResumenUpd()">
+      <span>${tipo}${fmtFecha(x.fecha)} · ${esc(x.detalle)} ${x.factura?"· "+esc(x.factura):""} — <b>${x.tipoComp==="NC"?"−":""}${money(resta)}</b>${parcial?` <span style="color:var(--red)" class="fine">(resto de ${money(x.monto)})</span>`:""}</span>
+    </label>`;
+  }).join("");
+  opMedios = [ { medio:"TRANSFERENCIA", monto:+pagoRestante(g).toFixed(2), detalle:"", fpago:"", chequeId:"" } ];
+  document.getElementById("opFecha").value = hoyISO();
+  opMediosRender(); opResumenUpd();
   document.getElementById("payPanel").style.display = "block";
   document.getElementById("payPanel").scrollIntoView({behavior:"smooth", block:"center"});
 }
-function toggleEcheqFields(){
-  const medio = document.getElementById("pMedio").value;
-  const esEcheq = medio === "ECHEQ", esCheq3 = medio === "CHEQUE3";
-  document.getElementById("pNumWrap").style.display = esEcheq ? "flex" : "none";
-  document.getElementById("pFPagoWrap").style.display = esEcheq ? "flex" : "none";
-  document.getElementById("pNum").required = esEcheq;
-  document.getElementById("pCheqWrap").style.display = esCheq3 ? "flex" : "none";
-  if(esCheq3){
-    const sel = document.getElementById("pCheq");
-    const disp = state.cheques.filter(c=>c.estado==="CARTERA");
-    sel.innerHTML = disp.length
-      ? disp.map(c=>`<option value="${c.id}">Nº ${esc(c.num)} — ${money(c.monto)} — cobro ${fmtFecha(c.fechaPago)||"s/f"}</option>`).join("")
-      : '<option value="">(no hay cheques en cartera)</option>';
-  }
+function opMediosRender(){
+  const cont = document.getElementById("opMedios");
+  const usados = opMedios.map(m=>m.chequeId).filter(Boolean);
+  cont.innerHTML = opMedios.map((m,i)=>{
+    let extra = "";
+    if(m.medio==="ECHEQ"){
+      extra = `<input type="text" value="${esc(m.detalle)}" placeholder="Nº cheque propio" onchange="opSet(${i},'detalle',this.value)" oninput="opSet(${i},'detalle',this.value)"
+        style="border:1px solid var(--line); border-radius:7px; padding:7px 8px; font-size:14px; width:150px;">
+        <input type="date" value="${m.fpago||""}" title="Fecha de cobro" onchange="opSet(${i},'fpago',this.value)"
+        style="border:1px solid var(--line); border-radius:7px; padding:6px 8px; font-size:14px;">`;
+    }
+    if(m.medio==="CHEQUE3"){
+      const disp = state.cheques.filter(c=>c.estado==="CARTERA" && (c.id===m.chequeId || !usados.includes(c.id)));
+      extra = `<select onchange="opSetCheque(${i},this.value)" style="border:1px solid var(--line); border-radius:7px; padding:7px 8px; font-size:14px; max-width:280px;">
+        <option value="">(elegí un cheque)</option>` +
+        disp.map(c=>`<option value="${c.id}" ${c.id===m.chequeId?"selected":""}>Nº ${esc(c.num)} — ${money(c.monto)} — cobro ${fmtFecha(c.fechaPago)||"s/f"}</option>`).join("") +
+        `</select>`;
+    }
+    return `<div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:6px;">
+      <select onchange="opSet(${i},'medio',this.value)" style="border:1px solid var(--line); border-radius:7px; padding:7px 8px; font-size:14px;">
+        ${MEDIOS_OP.map(o=>`<option value="${o.val}" ${m.medio===o.val?"selected":""}>${o.lbl}</option>`).join("")}
+      </select>
+      <input type="number" min="0" step="0.01" value="${m.monto||""}" placeholder="Monto $" ${m.medio==="CHEQUE3"?"readonly":""} onchange="opSet(${i},'monto',this.value)" oninput="opSet(${i},'monto',this.value)"
+        style="border:1px solid var(--line); border-radius:7px; padding:7px 8px; font-size:14px; width:130px; ${m.medio==="CHEQUE3"?"background:#f2f4f7;":""}">
+      ${extra}
+      ${opMedios.length>1 ? `<button class="btn small" type="button" onclick="opQuitar(${i})">✕</button>` : ""}
+    </div>`;
+  }).join("");
 }
-document.getElementById("pMedio").addEventListener("change", toggleEcheqFields);
-function cerrarPayPanel(){
-  payingGasto = null;
-  document.getElementById("payPanel").style.display = "none";
+function opSet(i, campo, valor){
+  if(!opMedios[i]) return;
+  opMedios[i][campo] = campo==="monto" ? Number(valor)||0 : valor;
+  if(campo==="medio"){ opMedios[i].chequeId=""; if(valor==="CHEQUE3") opMedios[i].monto=0; opMediosRender(); }
+  opResumenUpd();
 }
+function opSetCheque(i, cid){
+  if(!opMedios[i]) return;
+  opMedios[i].chequeId = cid;
+  const c = state.cheques.find(x=>x.id===cid);
+  opMedios[i].monto = c ? Number(c.monto)||0 : 0;
+  opMediosRender(); opResumenUpd();
+}
+function opQuitar(i){ opMedios.splice(i,1); opMediosRender(); opResumenUpd(); }
+document.getElementById("opAddMedio").addEventListener("click", ()=>{
+  const dif = opTotComps() - opTotMedios();
+  opMedios.push({ medio:"CHEQUE3", monto:0, detalle:"", fpago:"", chequeId:"" });
+  opMediosRender(); opResumenUpd();
+});
+function opTotComps(){
+  return [...document.querySelectorAll(".op-comp:checked")].reduce((s,ch)=>{
+    const g = state.gastos.find(x=>x.id===ch.value);
+    if(!g) return s;
+    return s + (g.tipoComp==="NC" ? -pagoRestante(g) : pagoRestante(g));
+  },0);
+}
+function opTotMedios(){ return opMedios.reduce((s,m)=>s+(Number(m.monto)||0),0); }
+function opResumenUpd(){
+  const tc = opTotComps(), tm = opTotMedios(), dif = tc-tm;
+  document.getElementById("opResumen").innerHTML =
+    `Comprobantes (neto): <b>${money(tc)}</b> · Pago: <b>${money(tm)}</b> · ` +
+    (Math.abs(dif)<0.01 ? `<span style="color:var(--green); font-weight:700;">✓ cierra</span>` : `<span style="color:var(--red); font-weight:700;">dif. ${money(dif)}</span>`);
+}
+function cerrarPayPanel(){ document.getElementById("payPanel").style.display = "none"; }
 document.getElementById("pCancel").addEventListener("click", cerrarPayPanel);
-document.getElementById("formPay").addEventListener("submit", e=>{
-  e.preventDefault();
-  const g = state.gastos.find(x=>x.id===payingGasto);
-  if(!g){ cerrarPayPanel(); return; }
-  const medio = document.getElementById("pMedio").value;
-  const fecha = document.getElementById("pFecha").value;
-  const pago = { medio, fecha };
-  if(medio==="ECHEQ"){
-    const num = document.getElementById("pNum").value.trim();
-    if(!num){ toast("Cargá el número del e-cheq"); return; }
-    const c = {
-      id: newId(), num,
-      emision: fecha,
-      fechaPago: document.getElementById("pFPago").value || fecha,
-      detalle: g.detalle, monto: g.monto,
-      gastoId: g.id, debitado: false
-    };
-    state.echeqs.push(c);
-    pago.echeqId = c.id;
-    dbUpsert("echeqs", c);
+document.getElementById("opConfirmar").addEventListener("click", ()=>{
+  const sel = [...document.querySelectorAll(".op-comp:checked")].map(ch=>ch.value);
+  if(!sel.length){ toast("Elegí al menos un comprobante"); return; }
+  const medios = opMedios.filter(m=>(Number(m.monto)||0)>0);
+  const selGastos = sel.map(idg=>state.gastos.find(x=>x.id===idg)).filter(Boolean);
+  const ncs = selGastos.filter(g=>g.tipoComp==="NC");
+  const positivos = selGastos.filter(g=>g.tipoComp!=="NC").sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||""));
+  if(!positivos.length){ toast("Elegí al menos una factura o ND (las NC solas se aplican desde su botón)"); return; }
+  for(const m of medios){
+    if(m.medio==="ECHEQ" && !String(m.detalle||"").trim()){ toast("Falta el número de un cheque propio"); return; }
+    if(m.medio==="CHEQUE3" && !m.chequeId){ toast("Elegí el cheque de la cartera"); return; }
   }
-  if(medio==="CHEQUE3"){
-    const cid = document.getElementById("pCheq").value;
-    const c3 = state.cheques.find(x=>x.id===cid && x.estado==="CARTERA");
-    if(!c3){ toast("Elegí un cheque de la cartera"); return; }
-    c3.estado = "APLICADO"; c3.gastoId = g.id;
-    dbUpsert("cheques", c3);
-    pago.chequeId = c3.id;
+  const dif = opTotComps() - medios.reduce((s,m)=>s+m.monto,0);
+  if(Math.abs(dif)>=0.01 && !confirm(dif>0
+    ? "El pago no cubre el total (faltan "+money(dif)+"). El comprobante que quede a medias va a figurar como PAGO PARCIAL. ¿Registrar igual?"
+    : "El pago supera el total de los comprobantes (sobran "+money(-dif)+"). ¿Registrar igual?")) return;
+  const g0 = positivos[0];
+  const t0 = g0.cuit ? state.terceros.find(x=>normCuit(x.cuit)===normCuit(g0.cuit)) : null;
+  const fecha = document.getElementById("opFecha").value || hoyISO();
+  const numero = state.ordenes.reduce((mx,r)=>Math.max(mx, Number(r.numero)||0), 0) + 1;
+  const orden = { id: newId(), numero, fecha, proveedor: t0 ? t0.nombre : g0.detalle, cuit: g0.cuit||"", gastos: [], medios: [], total: 0 };
+  medios.forEach(m=>{
+    const linea = { medio: m.medio, monto: +Number(m.monto).toFixed(2), detalle: String(m.detalle||"").trim() };
+    if(m.medio==="ECHEQ"){
+      const c = { id: newId(), num: linea.detalle, emision: fecha,
+        fechaPago: m.fpago || fecha, detalle: "OP Nº "+numero+" — "+orden.proveedor,
+        monto: linea.monto, gastoId: null, debitado: false };
+      state.echeqs.push(c); dbUpsert("echeqs", c);
+      linea.echeqId = c.id;
+    }
+    if(m.medio==="CHEQUE3"){
+      const c3 = state.cheques.find(x=>x.id===m.chequeId && x.estado==="CARTERA");
+      if(c3){ c3.estado = "APLICADO"; c3.gastoId = g0.id; dbUpsert("cheques", c3); linea.chequeId = c3.id; }
+    }
+    orden.medios.push(linea);
+    orden.total += linea.monto;
+  });
+  orden.total = +orden.total.toFixed(2);
+  /* aplicar NC completas + repartir el resto entre facturas/ND de la más vieja a la más nueva */
+  let pool = orden.total + ncs.reduce((s,g)=>s+pagoRestante(g),0);
+  let parciales = 0;
+  ncs.forEach(g=>{
+    const entrada = { opId: orden.id, monto: +pagoRestante(g).toFixed(2) };
+    if(g.pago && g.pago.ops){ g.pago.ops.push(entrada); g.pago.fecha = fecha; }
+    else g.pago = { ops:[entrada], fecha };
+    orden.gastos.push(g.id);
+    dbUpsert("gastos", g);
+  });
+  positivos.forEach((g,ix)=>{
+    const resta = pagoRestante(g);
+    let asig = Math.min(resta, pool);
+    pool = +(pool - asig).toFixed(2);
+    if(ix===positivos.length-1 && pool>0){ asig = +(asig + pool).toFixed(2); pool = 0; }
+    if(asig<=0) return;
+    const entrada = { opId: orden.id, monto:+asig.toFixed(2) };
+    if(g.pago && g.pago.ops){ g.pago.ops.push(entrada); g.pago.fecha = fecha; }
+    else g.pago = { ops:[entrada], fecha };
+    if(!pagoCompleto(g)) parciales++;
+    orden.gastos.push(g.id);
+    dbUpsert("gastos", g);
+  });
+  state.ordenes.push(orden);
+  dbUpsert("ordenes", orden);
+  cerrarPayPanel(); renderAll();
+  toast("Orden de pago Nº "+numero+" registrada ✓ ("+orden.gastos.length+" comprobante(s)"+(parciales?" · "+parciales+" con pago parcial":"")+")");
+});
+function undoOrden(oid){
+  const o = state.ordenes.find(x=>x.id===oid); if(!o) return;
+  for(const m of (o.medios||[])){
+    if(m.echeqId){
+      const c = state.echeqs.find(x=>x.id===m.echeqId);
+      if(c && c.debitado){ toast("Un cheque propio de esta OP ya debitó en el banco. Marcalo como pendiente primero."); return; }
+    }
   }
-  g.pago = pago;
-  cerrarPayPanel(); dbUpsert("gastos", g); renderAll();
-  toast(medio==="ECHEQ" ? "Pagado con cheque propio — quedó en Banco para conciliar"
-    : medio==="CHEQUE3" ? "Pagado con cheque de tercero — salió de la cartera ✓"
-    : "Pago registrado ✓");
+  if(!confirm("¿Deshacer la orden de pago Nº "+o.numero+" de "+o.proveedor+"? Se liberan sus comprobantes"+((o.medios||[]).some(m=>m.chequeId)?" y sus cheques de tercero vuelven a la cartera":"")+".")) return;
+  (o.medios||[]).forEach(m=>{
+    if(m.echeqId){
+      const c = state.echeqs.find(x=>x.id===m.echeqId);
+      if(c){ state.echeqs.splice(state.echeqs.indexOf(c),1); dbDelete("echeqs", m.echeqId); }
+    }
+    if(m.chequeId){
+      const c3 = state.cheques.find(x=>x.id===m.chequeId);
+      if(c3){ c3.estado = "CARTERA"; c3.gastoId = null; dbUpsert("cheques", c3); }
+    }
+  });
+  (o.gastos||[]).forEach(idg=>{
+    const g = state.gastos.find(x=>x.id===idg);
+    if(!g || !g.pago) return;
+    if(g.pago.ops){
+      g.pago.ops = g.pago.ops.filter(e=>e.opId!==oid);
+      if(!g.pago.ops.length) g.pago = null;
+      dbUpsert("gastos", g);
+    }
+  });
+  state.ordenes.splice(state.ordenes.indexOf(o),1);
+  dbDelete("ordenes", oid);
+  renderAll(); toast("Orden de pago Nº "+o.numero+" deshecha");
 }
-);
 function undoPago(id){
   const g = state.gastos.find(x=>x.id===id); if(!g || !g.pago) return;
   if(!confirm("¿Deshacer el pago de \""+g.detalle+"\"? "+(g.pago.medio==="ECHEQ" ? "También se borra el e-cheq del registro." : ""))) return;
@@ -1417,6 +1575,12 @@ function saldos(){
     else if(g.pago.medio==="EFECTIVO") ef-=g.monto;
   });
   state.echeqs.forEach(c=>{ if(c.debitado) banco-=echeqMonto(c); });
+  state.ordenes.forEach(o=>{
+    (o.medios||[]).forEach(m=>{
+      if(m.medio==="TRANSFERENCIA") banco-=Number(m.monto)||0;
+      else if(m.medio==="EFECTIVO") ef-=Number(m.monto)||0;
+    });
+  });
   state.viajes.forEach(v=>{
     if(!v.cobro || v.cobro.reciboId) return;   // los recibos se suman aparte
     const m = Number(v.cobro.monto)||0;
@@ -1458,6 +1622,14 @@ function movimientosBanco(){
       if(m.medio==="TRANSFERENCIA" || m.medio==="EFECTIVO"){
         list.push({ fecha:r.fecha, cuenta:m.medio==="TRANSFERENCIA"?"BANCO":"EFECTIVO",
           tipo:"INGRESO", detalle:"Recibo Nº "+r.numero+" — "+r.cliente, monto:Number(m.monto)||0, manual:false });
+      }
+    });
+  });
+  state.ordenes.forEach(o=>{
+    (o.medios||[]).forEach(m=>{
+      if(m.medio==="TRANSFERENCIA" || m.medio==="EFECTIVO"){
+        list.push({ fecha:o.fecha, cuenta:m.medio==="TRANSFERENCIA"?"BANCO":"EFECTIVO",
+          tipo:"EGRESO", detalle:"OP Nº "+o.numero+" — "+o.proveedor, monto:Number(m.monto)||0, manual:false });
       }
     });
   });
@@ -1684,6 +1856,25 @@ function renderCtaCte(){
   const totRet = state.recibos.reduce((s,r)=>s+(r.medios||[]).filter(m=>m.medio==="RETENCION").reduce((t,m)=>t+(Number(m.monto)||0),0),0);
   document.getElementById("kCCRet").textContent = money(totRet);
 
+  /* Órdenes de pago emitidas */
+  const wrapO = document.getElementById("tblOrdenes");
+  const ords = [...state.ordenes].sort((a,b)=>(Number(b.numero)||0)-(Number(a.numero)||0));
+  const medioLblOp = m => m==="TRANSFERENCIA"?"Transf.":m==="EFECTIVO"?"Efvo.":m==="ECHEQ"?"Cheq. propio":"Cheq. 3ro";
+  if(!ords.length){ wrapO.innerHTML = '<div class="empty">Sin órdenes de pago todavía. Se generan desde el botón Pagar en Gastos.</div>'; }
+  else{
+    wrapO.innerHTML = `<table><thead><tr>
+        <th>Nº</th><th>Fecha</th><th>Proveedor</th><th class="num">Comprob.</th><th>Medios</th><th class="num">Total</th>
+      </tr></thead><tbody>` +
+      ords.map(o=>`<tr>
+        <td><b>${o.numero}</b></td>
+        <td>${fmtFecha(o.fecha)}</td>
+        <td>${esc(o.proveedor)}</td>
+        <td class="num">${(o.gastos||[]).length}</td>
+        <td class="fine">${(o.medios||[]).map(m=>medioLblOp(m.medio)+" "+money(m.monto)+(m.detalle?" ("+esc(m.detalle)+")":"")).join(" · ")}</td>
+        <td class="num"><b>${money(o.total)}</b></td></tr>`).join("") +
+      `</tbody></table>`;
+  }
+
   /* Clientes */
   const cli = new Map();
   state.viajes.forEach(v=>{
@@ -1734,7 +1925,7 @@ function renderCtaCte(){
     const e = prov.get(key) || { nombre: t ? t.nombre : g.detalle, cuit: g.cuit||"", comp:0, total:0, pagado:0 };
     e.comp++;
     e.total += gastoMonto(g);
-    if(g.pago) e.pagado += gastoMonto(g);
+    e.pagado += pagoAplicadoSigned(g);
     prov.set(key, e);
   });
   const wrapP = document.getElementById("tblCCProv");
@@ -1770,7 +1961,10 @@ function exportExcel(){
     "Categoría": r.categoria,
     "Nº Factura": r.factura||"", "Alícuota": Number(r.alic)||0,
     "Neto": +gastoNeto(r).toFixed(2), "IVA": +gastoIva(r).toFixed(2), "Total": +gastoMonto(r).toFixed(2),
-    "Pago": r.pago ? r.pago.medio : "", "Fecha Pago": r.pago ? (r.pago.fecha||"") : "",
+    "Pago": r.pago ? (r.pago.ops ? (pagoCompleto(r) ? "OP" : "OP PARCIAL") : r.pago.medio) : "",
+    "Fecha Pago": r.pago ? (r.pago.fecha||"") : "",
+    "Monto Pagado": r.pago && r.pago.ops ? +pagoAsignado(r).toFixed(2) : "",
+    "OP Nº": r.pago && r.pago.ops ? r.pago.ops.map(e=>{ const o = state.ordenes.find(x=>x.id===e.opId); return o ? o.numero : ""; }).filter(Boolean).join(",") : "",
     "Nº E-Cheq": c ? c.num : "", "Nº Cheque 3ro": c3 ? c3.num : "" };
   }));
   const vS = XLSX.utils.json_to_sheet(state.viajes.map(r=>({
@@ -1791,6 +1985,11 @@ function exportExcel(){
       return "";
     })(),
     "Cheque Nº": (()=>{ const c = r.cobro && r.cobro.chequeId ? state.cheques.find(x=>x.id===r.cobro.chequeId) : null; return c ? c.num : ""; })() })));
+  const opS = XLSX.utils.json_to_sheet(state.ordenes.flatMap(o=>
+    (o.medios||[]).map(m=>({
+      "OP Nº": o.numero, "Fecha": o.fecha, "Proveedor": o.proveedor, "CUIT": o.cuit||"",
+      "Medio": m.medio, "Monto": Number(m.monto)||0, "Detalle": m.detalle||"",
+      "Total OP": Number(o.total)||0 }))));
   const rcS = XLSX.utils.json_to_sheet(state.recibos.flatMap(r=>
     (r.medios||[]).map(m=>({
       "Recibo Nº": r.numero, "Fecha": r.fecha, "Cliente": r.cliente, "CUIT": r.cuit||"",
@@ -1845,6 +2044,7 @@ function exportExcel(){
   XLSX.utils.book_append_sheet(wb, cS, "E-Cheqs");
   XLSX.utils.book_append_sheet(wb, bS, "Banco");
   XLSX.utils.book_append_sheet(wb, rcS, "Recibos");
+  XLSX.utils.book_append_sheet(wb, opS, "Ordenes Pago");
   XLSX.utils.book_append_sheet(wb, qS, "Cheques Cartera");
   XLSX.utils.book_append_sheet(wb, tS, "Terceros");
   XLSX.utils.book_append_sheet(wb, pS, "Pago Chofer");
@@ -1879,7 +2079,25 @@ document.getElementById("fileImport").addEventListener("change", function(){
     try{
       const wb = XLSX.read(new Uint8Array(e.target.result), {type:"array", cellDates:true});
       const sheet = n => wb.Sheets[n] ? XLSX.utils.sheet_to_json(wb.Sheets[n], {defval:""}) : [];
-      const nuevo = { gastos:[], viajes:[], rendiciones:[], echeqs:[], banco:[], terceros:[], cheques:[], recibos:[] };
+      const nuevo = { gastos:[], viajes:[], rendiciones:[], echeqs:[], banco:[], terceros:[], cheques:[], recibos:[], ordenes:[] };
+      /* Ordenes de pago: una fila por medio */
+      const opMap = new Map();
+      sheet("Ordenes Pago").forEach(r=>{
+        const num = Number(r["OP Nº"]||r["OP N°"])||0;
+        if(!num) return;
+        if(!opMap.has(num)) opMap.set(num, { id: newId(), numero: num, fecha: normFecha(r["Fecha"]),
+          proveedor: String(r["Proveedor"]||""), cuit: normCuit(r["CUIT"]), gastos: [], medios: [], total: 0 });
+        const o = opMap.get(num);
+        const medio = String(r["Medio"]||"").trim().toUpperCase();
+        const monto = Number(r["Monto"])||0;
+        if(medio && monto){
+          const linea = { medio, monto, detalle: String(r["Detalle"]||"") };
+          if(medio==="ECHEQ") linea._echeqNum = linea.detalle;
+          if(medio==="CHEQUE3") linea._cheq3Num = linea.detalle;
+          o.medios.push(linea); o.total += monto;
+        }
+      });
+      opMap.forEach(o=>{ o.total = +o.total.toFixed(2); nuevo.ordenes.push(o); });
       /* Recibos: una fila por medio, agrupadas por Nº */
       const rcMap = new Map();
       sheet("Recibos").forEach(r=>{
@@ -1924,6 +2142,10 @@ document.getElementById("fileImport").addEventListener("change", function(){
           alic: isNaN(alic)?21:alic,
           monto: Math.abs(Number(r["Total"]!==""&&r["Total"]!=null ? r["Total"] : r["Monto"])||0),
           pago: null };
+        if(medio==="OP"||medio==="OP PARCIAL"){
+          const nums = String(r["OP Nº"]||r["OP N°"]||"").split(/[,;]/).map(x=>Number(String(x).trim())).filter(Boolean);
+          g.pago = { _opNums: nums, fecha: normFecha(r["Fecha Pago"])||g.fecha, _monto: Number(r["Monto Pagado"])||0 };
+        }
         if(medio==="NC"){ g.pago = { medio:"NC", fecha: normFecha(r["Fecha Pago"])||g.fecha }; }
         if(medio==="EFECTIVO"||medio==="TRANSFERENCIA"||medio==="ECHEQ"||medio==="CHEQUE3"){
           g.pago = { medio, fecha: normFecha(r["Fecha Pago"])||g.fecha };
@@ -1953,7 +2175,31 @@ document.getElementById("fileImport").addEventListener("change", function(){
           if(c){ c.gastoId = g.id; g.pago.chequeId = c.id; }
           delete g.pago._cheq3Num;
         }
+        if(g.pago && g.pago._opNums){
+          const entradas = [];
+          g.pago._opNums.forEach((num,ix)=>{
+            const o = nuevo.ordenes.find(x=>x.numero===num);
+            if(o){ o.gastos.push(g.id); entradas.push({ opId: o.id, monto: ix===0 ? (Number(g.pago._monto)||0) : 0 }); }
+          });
+          g.pago = entradas.length ? { ops: entradas, fecha: g.pago.fecha } : null;
+        }
       });
+      /* vincular medios de OP con cheques propios y de terceros por número */
+      nuevo.ordenes.forEach(o=>{
+        o.medios.forEach(m=>{
+          if(m._echeqNum != null){
+            const c = nuevo.echeqs.find(x=>x.num===m._echeqNum && x.gastoId==null && !x._usado);
+            if(c){ m.echeqId = c.id; c._usado = true; }
+            delete m._echeqNum;
+          }
+          if(m._cheq3Num != null){
+            const c = nuevo.cheques.find(x=>x.num===m._cheq3Num && x.estado==="APLICADO" && x.gastoId==null);
+            if(c){ m.chequeId = c.id; c.gastoId = o.gastos[0]||null; }
+            delete m._cheq3Num;
+          }
+        });
+      });
+      nuevo.echeqs.forEach(c=>{ delete c._usado; });
       /* vincular cheques de cobros con viajes por número */
       nuevo.viajes.forEach(v=>{
         if(v.cobro && v.cobro.medio==="CHEQUE"){
@@ -2026,13 +2272,14 @@ document.getElementById("fileImport").addEventListener("change", function(){
       });
       toast("Importando a la base compartida…");
       const wipe = async t => { const {error} = await sb.from(t).delete().not("id","is",null); if(error) throw error; };
-      await wipe("echeqs"); await wipe("cheques"); await wipe("recibos"); await wipe("gastos"); await wipe("viajes"); await wipe("rendiciones"); await wipe("banco");
+      await wipe("echeqs"); await wipe("cheques"); await wipe("recibos"); await wipe("ordenes"); await wipe("gastos"); await wipe("viajes"); await wipe("rendiciones"); await wipe("banco");
       const insertar = async (t, rows) => { if(rows.length){ const {error} = await sb.from(t).insert(rows.map(MAP[t].to)); if(error) throw error; } };
       await insertar("gastos", nuevo.gastos); await insertar("viajes", nuevo.viajes);
       await insertar("rendiciones", nuevo.rendiciones); await insertar("banco", nuevo.banco);
       await insertar("echeqs", nuevo.echeqs);
       await insertar("cheques", nuevo.cheques);
       await insertar("recibos", nuevo.recibos);
+      await insertar("ordenes", nuevo.ordenes);
       if(nuevo.terceros.length){
         const {error: eT} = await sb.from("terceros").delete().not("cuit","is",null);
         if(eT) throw eT;
