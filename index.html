@@ -880,7 +880,8 @@ const MEDIOS_OP = [
   { val:"TRANSFERENCIA", lbl:"Transferencia (sale del banco)" },
   { val:"EFECTIVO", lbl:"Efectivo (sale de caja)" },
   { val:"ECHEQ", lbl:"Cheque propio / e-cheq" },
-  { val:"CHEQUE3", lbl:"Cheque de tercero (cartera)" }
+  { val:"CHEQUE3", lbl:"Cheque de tercero (cartera)" },
+  { val:"ACUENTA", lbl:"Aplicar saldo a favor (a cuenta)" }
 ];
 function pagarGasto(id){
   const g = state.gastos.find(x=>x.id===id); if(!g || pagoCompleto(g)) return;
@@ -898,6 +899,7 @@ function pagarGasto(id){
     </label>`;
   }).join("");
   opMedios = [ { medio:"TRANSFERENCIA", monto:+pagoRestante(g).toFixed(2), detalle:"", fpago:"", chequeId:"" } ];
+  opCreditoDisp = creditoProveedor(key);
   document.getElementById("opFecha").value = hoyISO();
   opMediosRender(); opResumenUpd();
   document.getElementById("payPanel").style.display = "block";
@@ -963,7 +965,10 @@ function opResumenUpd(){
   const tc = opTotComps(), tm = opTotMedios(), dif = tc-tm;
   document.getElementById("opResumen").innerHTML =
     `Comprobantes (neto): <b>${money(tc)}</b> · Pago: <b>${money(tm)}</b> · ` +
-    (Math.abs(dif)<0.01 ? `<span style="color:var(--green); font-weight:700;">✓ cierra</span>` : `<span style="color:var(--red); font-weight:700;">dif. ${money(dif)}</span>`);
+    (Math.abs(dif)<0.01 ? `<span style="color:var(--green); font-weight:700;">✓ cierra</span>`
+      : dif<0 ? `<span style="color:var(--blue); font-weight:700;">sobran ${money(-dif)} → a cuenta</span>`
+      : `<span style="color:var(--red); font-weight:700;">dif. ${money(dif)}</span>`) +
+    (opCreditoDisp>0 ? ` · <span style="color:var(--blue);">saldo a favor disp.: <b>${money(opCreditoDisp)}</b></span>` : "");
 }
 function cerrarPayPanel(){ document.getElementById("payPanel").style.display = "none"; }
 document.getElementById("pCancel").addEventListener("click", cerrarPayPanel);
@@ -979,10 +984,12 @@ document.getElementById("opConfirmar").addEventListener("click", ()=>{
     if(m.medio==="ECHEQ" && !String(m.detalle||"").trim()){ toast("Falta el número de un cheque propio"); return; }
     if(m.medio==="CHEQUE3" && !m.chequeId){ toast("Elegí el cheque de la cartera"); return; }
   }
+  const usaAcuentaOp = medios.filter(m=>m.medio==="ACUENTA").reduce((s,m)=>s+m.monto,0);
+  if(usaAcuentaOp > opCreditoDisp + 0.01){ toast("El saldo a favor disponible con este proveedor es "+money(opCreditoDisp)); return; }
   const dif = opTotComps() - medios.reduce((s,m)=>s+m.monto,0);
   if(Math.abs(dif)>=0.01 && !confirm(dif>0
     ? "El pago no cubre el total (faltan "+money(dif)+"). El comprobante que quede a medias va a figurar como PAGO PARCIAL. ¿Registrar igual?"
-    : "El pago supera el total de los comprobantes (sobran "+money(-dif)+"). ¿Registrar igual?")) return;
+    : "El pago supera el total de los comprobantes (sobran "+money(-dif)+"). El sobrante queda como SALDO A CUENTA con este proveedor. ¿Registrar igual?")) return;
   const g0 = positivos[0];
   const t0 = g0.cuit ? state.terceros.find(x=>normCuit(x.cuit)===normCuit(g0.cuit)) : null;
   const fecha = document.getElementById("opFecha").value || hoyISO();
@@ -1015,11 +1022,10 @@ document.getElementById("opConfirmar").addEventListener("click", ()=>{
     orden.gastos.push(g.id);
     dbUpsert("gastos", g);
   });
-  positivos.forEach((g,ix)=>{
+  positivos.forEach(g=>{
     const resta = pagoRestante(g);
     let asig = Math.min(resta, pool);
-    pool = +(pool - asig).toFixed(2);
-    if(ix===positivos.length-1 && pool>0){ asig = +(asig + pool).toFixed(2); pool = 0; }
+    pool = +(pool - asig).toFixed(2);   // el sobrante queda a cuenta con el proveedor
     if(asig<=0) return;
     const entrada = { opId: orden.id, monto:+asig.toFixed(2) };
     if(g.pago && g.pago.ops){ g.pago.ops.push(entrada); g.pago.fecha = fecha; }
@@ -1193,8 +1199,41 @@ const MEDIOS_RC = [
   { val:"TRANSFERENCIA", lbl:"Transferencia (entra al banco)" },
   { val:"EFECTIVO", lbl:"Efectivo (entra a caja)" },
   { val:"CHEQUE", lbl:"Cheque de tercero (va a la cartera)" },
-  { val:"RETENCION", lbl:"Retenciones percibidas" }
+  { val:"RETENCION", lbl:"Retenciones percibidas" },
+  { val:"ACUENTA", lbl:"Aplicar saldo a favor (a cuenta)" }
 ];
+/* Saldos a favor (dinero a cuenta) — derivados de recibos y órdenes */
+function acuentaRecibo(r){
+  let asig = 0;
+  state.viajes.forEach(v=>{
+    if(!v.cobro) return;
+    if(v.cobro.recibos) v.cobro.recibos.forEach(e=>{ if(e.reciboId===r.id) asig += Number(e.monto)||0; });
+    else if(v.cobro.reciboId===r.id) asig += viajeTotalCIva(v);
+  });
+  return Math.max(0, +(((Number(r.total)||0) - asig).toFixed(2)));
+}
+function creditoCliente(key){
+  const rs = state.recibos.filter(r => (r.cuit || (r.cliente||"").trim().toUpperCase()) === key);
+  const ganado = rs.reduce((s,r)=>s+acuentaRecibo(r),0);
+  const usado = rs.reduce((s,r)=>s+(r.medios||[]).filter(m=>m.medio==="ACUENTA").reduce((t,m)=>t+(Number(m.monto)||0),0),0);
+  return Math.max(0, +((ganado-usado).toFixed(2)));
+}
+function acuentaOrden(o){
+  let pos = 0, nc = 0;
+  state.gastos.forEach(g=>{
+    if(g.pago && g.pago.ops) g.pago.ops.forEach(e=>{
+      if(e.opId===o.id){ if(g.tipoComp==="NC") nc += Number(e.monto)||0; else pos += Number(e.monto)||0; }
+    });
+  });
+  return Math.max(0, +((((Number(o.total)||0) + nc) - pos).toFixed(2)));
+}
+function creditoProveedor(key){
+  const os = state.ordenes.filter(o => (o.cuit || (o.proveedor||"").trim().toUpperCase()) === key);
+  const ganado = os.reduce((s,o)=>s+acuentaOrden(o),0);
+  const usado = os.reduce((s,o)=>s+(o.medios||[]).filter(m=>m.medio==="ACUENTA").reduce((t,m)=>t+(Number(m.monto)||0),0),0);
+  return Math.max(0, +((ganado-usado).toFixed(2)));
+}
+let rcCreditoDisp = 0, opCreditoDisp = 0;
 function cobrarViaje(id){
   const v = state.viajes.find(x=>x.id===id); if(!v || cobroCompleto(v)) return;
   const key = clienteKey(v);
@@ -1209,6 +1248,7 @@ function cobrarViaje(id){
     </label>`;
   }).join("");
   rcMedios = [ { medio:"TRANSFERENCIA", monto:+cobroRestante(v).toFixed(2), detalle:"", fpago:"" } ];
+  rcCreditoDisp = creditoCliente(key);
   document.getElementById("rcFecha").value = hoyISO();
   rcMediosRender(); rcResumenUpd();
   document.getElementById("cobroPanel").style.display = "block";
@@ -1255,7 +1295,10 @@ function rcResumenUpd(){
   const tf = rcTotFacturas(), tm = rcTotMedios(), dif = tf-tm;
   document.getElementById("rcResumen").innerHTML =
     `Facturas: <b>${money(tf)}</b> · Cobro: <b>${money(tm)}</b> · ` +
-    (Math.abs(dif)<0.01 ? `<span style="color:var(--green); font-weight:700;">✓ cierra</span>` : `<span style="color:var(--red); font-weight:700;">dif. ${money(dif)}</span>`);
+    (Math.abs(dif)<0.01 ? `<span style="color:var(--green); font-weight:700;">✓ cierra</span>`
+      : dif<0 ? `<span style="color:var(--blue); font-weight:700;">sobran ${money(-dif)} → a cuenta</span>`
+      : `<span style="color:var(--red); font-weight:700;">dif. ${money(dif)}</span>`) +
+    (rcCreditoDisp>0 ? ` · <span style="color:var(--blue);">saldo a favor disp.: <b>${money(rcCreditoDisp)}</b></span>` : "");
 }
 function cerrarCobroPanel(){ document.getElementById("cobroPanel").style.display = "none"; }
 document.getElementById("cbCancel").addEventListener("click", cerrarCobroPanel);
@@ -1267,10 +1310,12 @@ document.getElementById("rcConfirmar").addEventListener("click", ()=>{
   for(const m of medios){
     if(m.medio==="CHEQUE" && !String(m.detalle||"").trim()){ toast("Falta el número de un cheque"); return; }
   }
+  const usaAcuenta = medios.filter(m=>m.medio==="ACUENTA").reduce((s,m)=>s+m.monto,0);
+  if(usaAcuenta > rcCreditoDisp + 0.01){ toast("El saldo a favor disponible de este cliente es "+money(rcCreditoDisp)); return; }
   const dif = rcTotFacturas() - medios.reduce((s,m)=>s+m.monto,0);
   if(Math.abs(dif)>=0.01 && !confirm(dif>0
     ? "El cobro no cubre el total de las facturas (faltan "+money(dif)+"). La factura que quede a medias va a figurar como COBRO PARCIAL. ¿Registrar igual?"
-    : "El cobro supera el total de las facturas (sobran "+money(-dif)+"). ¿Registrar igual?")) return;
+    : "El cobro supera el total de las facturas (sobran "+money(-dif)+"). El sobrante queda como SALDO A CUENTA del cliente para el próximo cobro. ¿Registrar igual?")) return;
   const v0 = state.viajes.find(x=>x.id===sel[0]);
   const fecha = document.getElementById("rcFecha").value || hoyISO();
   const numero = state.recibos.reduce((mx,r)=>Math.max(mx, Number(r.numero)||0), 0) + 1;
@@ -1295,11 +1340,10 @@ document.getElementById("rcConfirmar").addEventListener("click", ()=>{
     .sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||""));
   recibo.viajes = [];
   let parciales = 0;
-  selViajes.forEach((v,ix)=>{
+  selViajes.forEach(v=>{
     const resta = cobroRestante(v);
     let asig = Math.min(resta, pool);
-    pool = +(pool - asig).toFixed(2);
-    if(ix===selViajes.length-1 && pool>0){ asig = +(asig + pool).toFixed(2); pool = 0; }  // sobrante al último
+    pool = +(pool - asig).toFixed(2);   // el sobrante NO se pisa: queda a cuenta del cliente
     if(asig<=0) return;
     const entrada = { reciboId: recibo.id, monto:+asig.toFixed(2) };
     if(v.cobro && v.cobro.recibos){ v.cobro.recibos.push(entrada); v.cobro.fecha = fecha; }
@@ -1891,7 +1935,8 @@ function renderCtaCte(){
     const key = r.cuit || (r.cliente||"").trim().toUpperCase();
     if(!key) return;
     const e = cli.get(key) || { nombre: r.cliente, cuit: r.cuit||"", viajes:0, fact:0, cobrado:0 };
-    e.cobrado += Number(r.total)||0;
+    /* plata realmente recibida: se excluye el medio "a cuenta" (ya se contó cuando entró) */
+    e.cobrado += (r.medios||[]).filter(m=>m.medio!=="ACUENTA").reduce((s,m)=>s+(Number(m.monto)||0),0);
     cli.set(key, e);
   });
   const wrapC = document.getElementById("tblCCClientes");
@@ -1910,7 +1955,7 @@ function renderCtaCte(){
           <td class="num">${e.viajes}</td>
           <td class="num">${money(e.fact)}</td>
           <td class="num">${money(e.cobrado)}</td>
-          <td class="num"><b>${money(saldo)}</b></td></tr>`;
+          <td class="num"><b>${saldo<-0.005?`<span style="color:var(--blue)">${money(-saldo)} a favor</span>`:money(saldo)}</b></td></tr>`;
       }).join("") +
       `</tbody><tfoot><tr><td colspan="2">Total</td><td class="num">${money(tF)}</td><td class="num">${money(tC)}</td><td class="num">${money(tF-tC)}</td></tr></tfoot></table>`;
     document.getElementById("kCCACobrar").textContent = money(tF-tC);
@@ -1925,7 +1970,15 @@ function renderCtaCte(){
     const e = prov.get(key) || { nombre: t ? t.nombre : g.detalle, cuit: g.cuit||"", comp:0, total:0, pagado:0 };
     e.comp++;
     e.total += gastoMonto(g);
-    e.pagado += pagoAplicadoSigned(g);
+    if(g.pago && !g.pago.ops) e.pagado += gastoMonto(g);   // pagos viejos y NC aplicadas sueltas
+    prov.set(key, e);
+  });
+  state.ordenes.forEach(o=>{
+    const key = o.cuit || (o.proveedor||"").trim().toUpperCase();
+    if(!key) return;
+    const e = prov.get(key) || { nombre: o.proveedor, cuit: o.cuit||"", comp:0, total:0, pagado:0 };
+    e.pagado += (o.medios||[]).filter(m=>m.medio!=="ACUENTA").reduce((s,m)=>s+(Number(m.monto)||0),0);
+    /* las NC incluidas en OPs también bajan la deuda como "pagado" contable: ya restan en total, no acá */
     prov.set(key, e);
   });
   const wrapP = document.getElementById("tblCCProv");
@@ -1937,12 +1990,13 @@ function renderCtaCte(){
     </tr></thead><tbody>` +
     filasP.map(e=>{
       tT+=e.total; tP+=e.pagado;
+      const saldoP = e.total-e.pagado;
       return `<tr>
         <td>${esc(e.nombre)}${e.cuit?`<div class="fine">${esc(e.cuit)}</div>`:""}</td>
         <td class="num">${e.comp}</td>
         <td class="num">${money(e.total)}</td>
         <td class="num">${money(e.pagado)}</td>
-        <td class="num"><b>${money(e.total-e.pagado)}</b></td></tr>`;
+        <td class="num"><b>${saldoP<-0.005?`<span style="color:var(--blue)">${money(-saldoP)} a favor</span>`:money(saldoP)}</b></td></tr>`;
     }).join("") +
     `</tbody><tfoot><tr><td colspan="2">Total</td><td class="num">${money(tT)}</td><td class="num">${money(tP)}</td><td class="num">${money(tT-tP)}</td></tr></tfoot></table>`;
   document.getElementById("kCCAPagar").textContent = money(tT-tP);
