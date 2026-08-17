@@ -369,7 +369,12 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     </div>
 
     <div class="card">
-      <h2>E-cheqs generados</h2>
+      <h2>📅 Línea de tiempo — próximos cheques propios a debitar</h2>
+      <div id="tlCheques"></div>
+    </div>
+
+    <div class="card">
+      <h2>Cheques propios / e-cheqs emitidos</h2>
       <div class="tblwrap" style="border:none; margin-bottom:0;" id="tblEcheqs"></div>
     </div>
 
@@ -1768,6 +1773,40 @@ function renderBanco(){
           ${c.debitado ? "✓ Entró al banco" : "Por debitar"}</span></td>
       </tr>`).join("") +
       `</tbody><tfoot><tr><td colspan="4">Pendiente de débito</td><td class="num">${money(pendMonto)}</td><td></td></tr></tfoot></table>`;
+  }
+
+  /* Línea de tiempo de cheques propios pendientes */
+  const tl = document.getElementById("tlCheques");
+  const proximos = state.echeqs.filter(c=>!c.debitado)
+    .sort((a,b)=>(a.fechaPago||"9999").localeCompare(b.fechaPago||"9999"));
+  if(!proximos.length){
+    tl.innerHTML = '<div class="empty">No hay cheques propios pendientes de debitar. 🎉</div>';
+  }else{
+    const hoy = hoyISO();
+    let acum = s.banco, filas = "", mesAct = "";
+    proximos.forEach(c=>{
+      const m = (c.fechaPago||"").slice(0,7);
+      if(m !== mesAct){
+        mesAct = m;
+        filas += `<div style="margin:12px 0 5px; font-weight:700; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px;">${m ? nombreMes(m) : "Sin fecha de pago"}</div>`;
+      }
+      const monto = echeqMonto(c);
+      acum = +(acum - monto).toFixed(2);
+      const dias = c.fechaPago ? Math.round((new Date(c.fechaPago) - new Date(hoy)) / 86400000) : null;
+      const chipDia = dias===null ? "" : dias < 0 ? `<span class="chip nc">¡ya venció!</span>` : dias === 0 ? `<span class="chip nc">HOY</span>` : dias <= 7 ? `<span class="chip pend">en ${dias} día${dias===1?"":"s"}</span>` : `<span class="fine">en ${dias} días</span>`;
+      const borde = dias!==null && dias<=7 ? "var(--amber)" : "var(--line)";
+      filas += `<div style="display:flex; gap:10px; align-items:center; padding:7px 10px; border-left:3px solid ${borde}; margin-bottom:4px; background:#fafbfc; border-radius:0 8px 8px 0; flex-wrap:wrap;">
+        <b style="min-width:88px;">${fmtFecha(c.fechaPago)||"s/fecha"}</b>
+        ${chipDia}
+        <span>Nº ${esc(c.num)} · ${esc(c.detalle)||"—"}</span>
+        <span style="margin-left:auto; font-variant-numeric:tabular-nums;"><b>−${money(monto)}</b></span>
+        <span class="fine" style="min-width:190px; text-align:right;">saldo proyectado: <b style="color:${acum<-0.005?"var(--red)":"var(--green)"};">${money(acum)}</b></span>
+      </div>`;
+    });
+    const totProx = proximos.reduce((t,c)=>t+echeqMonto(c),0);
+    tl.innerHTML = `<div class="fine" style="margin-bottom:6px;">Partiendo del saldo banco actual (<b>${money(s.banco)}</b>), el saldo proyectado a medida que entren los cheques:</div>`
+      + filas
+      + `<div style="margin-top:10px; font-weight:700;">Total por debitar: ${money(totProx)} en ${proximos.length} cheque${proximos.length===1?"":"s"}</div>`;
   }
 
   /* Tabla movimientos */
