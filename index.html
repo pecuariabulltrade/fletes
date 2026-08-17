@@ -2488,7 +2488,14 @@ async function arrancar(){
   renderAll();
   try{
     const { data: { session } } = await sb.auth.getSession();
-    if(session) await arrancar();
+    if(session){
+      /* sesión recordada: no mostrar el formulario para que no parezca que "cualquier clave entra" */
+      document.getElementById("formLogin").style.display = "none";
+      document.getElementById("lError").textContent = "Entrando con la sesión guardada…";
+      await arrancar();
+      document.getElementById("formLogin").style.display = "";
+      document.getElementById("lError").textContent = "";
+    }
   }catch(e){ console.error(e); }
 })();
 </script>
